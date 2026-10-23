@@ -34,7 +34,11 @@ Instagram. Os passos abaixo são pra colocar no ar de verdade.
 2. Vá em **SQL Editor** e rode, **nesta ordem**, o conteúdo de:
    1. `supabase/sql/01_tabelas.sql` (tabelas + a linha inicial do freio)
    2. `supabase/sql/02_freio.sql` (as funções do freio)
-   3. `supabase/sql/03_rls.sql` (regras de acesso + pasta de arquivos)
+   3. `supabase/sql/03_rls.sql` (regras de acesso)
+   4. `supabase/sql/03b_storage.sql` (opcional: pasta de arquivos pra biblioteca de anexos)
+
+   Confira se aparece "Success". Se der erro, o Supabase desfaz o script inteiro e as tabelas
+   não são criadas (o painel continua abrindo, mas com tudo zerado e sem salvar).
 
 > **ATENÇÃO:** sem o `02_freio.sql`, o freio falha fechado e **nenhuma DM por comentário sai**
 > (tudo vai pra fila e a fila nunca anda). É o passo que não pode faltar.

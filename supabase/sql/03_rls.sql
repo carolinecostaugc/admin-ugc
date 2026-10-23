@@ -32,19 +32,8 @@ begin
   end loop;
 end $$;
 
--- ---------------------------------------------------------------------
--- Pasta de arquivos (Storage) para a biblioteca de anexos.
--- Pública para leitura (o Instagram precisa baixar o arquivo pelo link),
--- mas só quem está logado envia ou apaga.
--- ---------------------------------------------------------------------
-insert into storage.buckets (id, name, public)
-values ('ig-assets', 'ig-assets', true)
-on conflict (id) do nothing;
+-- Avisa a API do Supabase que tem tabela nova (atualiza o cache na hora)
+notify pgrst, 'reload schema';
 
-drop policy if exists "ig_assets_upload" on storage.objects;
-create policy "ig_assets_upload" on storage.objects
-  for insert to authenticated with check (bucket_id = 'ig-assets');
-
-drop policy if exists "ig_assets_delete" on storage.objects;
-create policy "ig_assets_delete" on storage.objects
-  for delete to authenticated using (bucket_id = 'ig-assets');
+-- A pasta de arquivos (Storage) fica no 03b_storage.sql, separada:
+-- se ela der erro, não desfaz as tabelas.
