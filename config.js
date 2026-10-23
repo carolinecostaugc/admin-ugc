@@ -6,6 +6,6 @@
 // Onde achar: Supabase > Project Settings > API
 // =====================================================================
 window.APP_CONFIG = {
-  SUPABASE_URL: "SUA_SUPABASE_URL_AQUI",          // ex: https://SEU_PROJETO.supabase.co
-  SUPABASE_ANON_KEY: "SUA_SUPABASE_ANON_KEY_AQUI",
+  SUPABASE_URL: "https://vuugnvljluhlcepaswni.supabase.co",
+  SUPABASE_ANON_KEY: "sb_publishable_ohxrwOEq7bSQd7vY7qJB1Q_cJlluLe4",  // chave pública (publishable)
 };
