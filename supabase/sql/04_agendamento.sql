@@ -43,6 +43,23 @@ select cron.schedule(
   $$
 );
 
+-- Limpeza (retenção, como diz a política de privacidade): todo dia às 03:00 (UTC)
+--   leads sem interação há 12 meses e registros de envio com mais de 12 meses
+--   controles internos (fila, eventos, mids, agendados) com mais de 30 dias
+select cron.unschedule(jobname) from cron.job where jobname = 'ig-limpeza';
+select cron.schedule(
+  'ig-limpeza',
+  '0 3 * * *',
+  $$
+  delete from public.ig_leads            where updated_at < now() - interval '12 months';
+  delete from public.ig_deliveries       where ts         < now() - interval '12 months';
+  delete from public.ig_send_queue       where status <> 'pendente' and created_at < now() - interval '30 days';
+  delete from public.ig_processed_events where ts         < now() - interval '30 days';
+  delete from public.ig_bot_sends        where ts         < now() - interval '30 days';
+  delete from public.ig_scheduled        where sent and created_at < now() - interval '30 days';
+  $$
+);
+
 -- Para conferir se ficou agendado:
 --   select jobname, schedule, active from cron.job;
 -- Para ver as últimas execuções:
