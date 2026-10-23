@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Seu Painel</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+  <!-- ============ PÁGINA 1: LOGIN ============ -->
+  <div id="tela-login" class="login" hidden>
+    <form id="form-login" class="login-card" novalidate>
+      <div class="logo-mark" aria-hidden="true"></div>
+      <h1>Entrar no painel</h1>
+      <p class="muted">Use o e-mail e a senha de acesso.</p>
+
+      <label class="campo">
+        <span class="rotulo">E-mail</span>
+        <input type="email" id="login-email" autocomplete="username" placeholder="voce@exemplo.com" required>
+      </label>
+      <label class="campo">
+        <span class="rotulo">Senha</span>
+        <input type="password" id="login-senha" autocomplete="current-password" placeholder="Sua senha" required>
+      </label>
+
+      <p id="login-erro" class="erro" hidden></p>
+      <button type="submit" class="btn btn-primario btn-largo" id="btn-entrar">Entrar</button>
+
+      <p id="login-aviso" class="aviso-local" hidden>
+        Modo de teste local: qualquer e-mail e uma senha de 5 dígitos entram.
+        No ar (produção), o login será pelo Supabase.
+      </p>
+    </form>
+  </div>
+
+  <!-- ============ PÁGINA 2: O SISTEMA ============ -->
+  <div id="app" class="app" hidden>
+    <aside class="sidebar" id="sidebar">
+      <div class="sidebar-topo">
+        <div class="marca"><span class="logo-mark pequeno" aria-hidden="true"></span> Seu Painel</div>
+        <button class="btn-icone menu-toggle" id="menu-toggle" aria-label="Abrir menu"></button>
+      </div>
+      <nav class="menu" id="menu">
+        <a href="#/inicio" data-rota="inicio"><span class="ic" data-icon="inicio"></span>Início</a>
+        <a href="#/calendario" data-rota="calendario"><span class="ic" data-icon="calendario"></span>Calendário</a>
+        <a href="#/instagram" data-rota="instagram"><span class="ic" data-icon="instagram"></span>Instagram</a>
+      </nav>
+      <div class="sidebar-rodape" id="sidebar-rodape">
+        <div class="usuario" id="usuario-email"></div>
+        <button class="btn btn-fantasma btn-largo" id="btn-sair"><span class="ic" data-icon="sair"></span>Sair</button>
+      </div>
+    </aside>
+
+    <main class="principal">
+      <div id="aviso-local" class="banner" hidden>
+        Você está no modo de teste local. Pra colocar no ar de verdade (com login e dados salvos), siga o LEIA-ME.
+      </div>
+      <div id="conteudo" class="conteudo"></div>
+    </main>
+  </div>
+
+  <!-- Editor de automação (tela cheia) -->
+  <div id="editor" class="editor" hidden></div>
+
+  <!-- Janela modal genérica -->
+  <div id="modal" class="modal-fundo" hidden></div>
+
+  <!-- Mensagens rápidas -->
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+  <!-- Configuração (SUPABASE_URL e SUPABASE_ANON_KEY) -->
+  <script src="config.js"></script>
+  <!-- Cliente oficial do Supabase -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
+  <!-- O app -->
+  <script src="app.js"></script>
+</body>
+</html>

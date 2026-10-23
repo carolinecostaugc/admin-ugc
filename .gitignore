@@ -1,0 +1,7 @@
+# Arquivos locais que não devem ir pro GitHub
+.env
+.env.*
+supabase/.temp/
+supabase/.branches/
+.DS_Store
+Thumbs.db
