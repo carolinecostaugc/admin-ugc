@@ -100,7 +100,7 @@ svg { width: 18px; height: 18px; flex-shrink: 0; }
 
 /* ---------------- Campos ---------------- */
 .campo { display: block; margin-bottom: 16px; }
-input[type="text"], input[type="email"], input[type="password"], input[type="url"], textarea, select {
+input[type="text"], input[type="email"], input[type="password"], input[type="url"], input[type="search"], textarea, select {
   width: 100%; font: inherit; font-size: 14px; color: var(--texto);
   background: var(--superficie); border: 1px solid var(--borda-forte); border-radius: 8px;
   padding: 10px 12px; transition: border-color .15s, box-shadow .15s;
@@ -248,6 +248,38 @@ textarea.link-grande { min-height: 70px; font-family: ui-monospace, Consolas, mo
 .selo.ok { background: var(--sucesso-suave); color: var(--sucesso); }
 .selo.off { background: var(--superficie-2); color: var(--texto-2); }
 
+/* ---------------- Leads (planilha) ---------------- */
+.grade-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.ferramentas { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-bottom: 14px; }
+.ferramentas input[type="search"] { flex: 1 1 260px; width: auto; }
+.ferramentas select { width: auto; }
+.ferramentas .espaco { flex: 1; }
+.tabela-rolagem { overflow-x: auto; border: 1px solid var(--borda); border-radius: var(--raio); }
+.tabela-leads { min-width: 1000px; }
+.tabela-leads th { background: var(--superficie-2); white-space: nowrap; }
+.tabela-leads td { vertical-align: top; }
+.tabela-leads tbody tr { cursor: pointer; }
+.tabela-leads tbody tr:hover, .tabela-leads tbody tr:focus-visible { background: var(--destaque-suave); outline: none; }
+.tabela-leads .sub, .historico .sub { display: block; font-size: 12px; color: var(--texto-2); }
+.tabela-leads .num { text-align: right; font-variant-numeric: tabular-nums; }
+.th-ordem {
+  font: inherit; text-transform: inherit; letter-spacing: inherit; color: inherit; font-weight: inherit;
+  background: none; border: 0; padding: 0; cursor: pointer;
+}
+.th-ordem:hover { color: var(--texto); }
+.th-ordem:focus-visible { outline: 2px solid var(--destaque); outline-offset: 2px; border-radius: 3px; }
+.paginacao { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; margin-top: 14px; font-size: 13.5px; color: var(--texto-2); }
+.paginacao span:last-child { display: flex; gap: 8px; }
+.modal.largo { max-width: 760px; }
+.info-grade { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px 22px; margin-bottom: 20px; }
+.info-grade .rotulo { margin-bottom: 2px; }
+.info-grade > div > div { font-size: 14px; word-break: break-word; }
+.historico { list-style: none; margin: 4px 0 0; padding: 0; max-height: 240px; overflow-y: auto; }
+.historico li { display: flex; align-items: flex-start; gap: 12px; padding: 9px 0; border-bottom: 1px solid var(--borda); font-size: 13.5px; }
+.historico .quando { width: 120px; flex-shrink: 0; color: var(--texto-2); font-variant-numeric: tabular-nums; }
+.historico .oque { flex: 1; min-width: 0; }
+.selo.erro { background: var(--erro-suave); color: var(--erro); }
+.selo.fila { background: var(--atencao-suave); color: var(--atencao); }
 /* Calendário em breve */
 .em-breve { padding: 72px 20px; }
 
@@ -374,6 +406,12 @@ textarea.link-grande { min-height: 70px; font-family: ui-monospace, Consolas, mo
   .ed-grade { grid-template-columns: 1fr; }
   .ed-previa-col { position: static; }
   .grade-3 { grid-template-columns: 1fr 1fr; }
+  .grade-4 { grid-template-columns: 1fr 1fr; }
+}
+@media (max-width: 560px) {
+  .info-grade { grid-template-columns: 1fr; }
+  .ferramentas select, .ferramentas .btn { flex: 1 1 100%; }
+  .historico .quando { width: 92px; }
 }
 @media (max-width: 720px) {
   .app { flex-direction: column; }

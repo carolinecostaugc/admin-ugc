@@ -51,7 +51,10 @@ select cron.schedule(
   'ig-limpeza',
   '0 3 * * *',
   $$
-  delete from public.ig_leads            where updated_at < now() - interval '12 months';
+  delete from public.ig_leads l
+   where l.created_at < now() - interval '12 months'
+     and not exists (select 1 from public.ig_deliveries d
+                      where d.ig_user_id = l.ig_user_id and d.ts > now() - interval '12 months');
   delete from public.ig_deliveries       where ts         < now() - interval '12 months';
   delete from public.ig_send_queue       where status <> 'pendente' and created_at < now() - interval '30 days';
   delete from public.ig_processed_events where ts         < now() - interval '30 days';

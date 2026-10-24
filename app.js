@@ -63,6 +63,7 @@
     raio: svg('<path d="M13 2 4 14h7l-1 8 9-12h-7z"/>'),
     usuarios: svg('<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0M16 4.5a3.5 3.5 0 0 1 0 7M18 14a6 6 0 0 1 3.5 6"/>'),
     enviar: svg('<path d="M21 3 10 14M21 3l-7 18-4-7-7-4z"/>'),
+    baixar: svg('<path d="M12 4v11M7 10l5 5 5-5M5 20h14"/>'),
   };
   function pintarIcones(raiz = document) {
     $$("[data-icon]", raiz).forEach((el) => { el.innerHTML = ICON[el.dataset.icon] || ""; });
@@ -92,6 +93,47 @@
   // ===================================================================
   const CHAVE_AUTOS = "teste_automacoes";
   const CHAVE_ARQS = "teste_arquivos";
+  const CHAVE_LEADS = "teste_leads";
+  const CHAVE_ENTREGAS = "teste_entregas";
+  let autosMapa = {}; // id da automação -> nome (usado na aba Leads)
+
+  // Conta linhas de uma consulta (zero se falhar)
+  async function contar(q) {
+    try { const { count, error } = await q; if (error) throw error; return count || 0; }
+    catch (e) { console.warn(e); return 0; }
+  }
+
+  // Tira da busca os caracteres que atrapalham o filtro do banco
+  const limparBusca = (s) => String(s || "").replace(/[,()*%\\:"']/g, " ").trim().replace(/\s+/g, "*").slice(0, 60);
+  const normal = (s) => String(s || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
+
+  // Modo teste: leads guardados no navegador, com as mesmas contas da visão
+  function leadsLocalTodos() {
+    const entregas = store.get(CHAVE_ENTREGAS, []);
+    const autos = store.get(CHAVE_AUTOS, []);
+    return store.get(CHAVE_LEADS, []).map((l) => {
+      const ok = entregas.filter((d) => d.ig_user_id === l.ig_user_id && d.status === "ok");
+      const a = autos.find((x) => x.id === l.automation_id);
+      return { ...l, interacoes: ok.length, ultima_entrega: ok.map((d) => d.ts).sort().pop() || null, automacao_nome: a ? a.nome : null };
+    });
+  }
+  function filtrarLeadsLocal(f, de, ate) {
+    let rows = leadsLocalTodos();
+    const b = normal(f.busca).trim();
+    if (b) rows = rows.filter((l) => [l.username, l.email, l.telefone, l.last_keyword, l.ig_user_id].some((v) => normal(v).includes(b)));
+    if (f.origem) rows = rows.filter((l) => l.last_source === f.origem);
+    if (f.etiqueta) rows = rows.filter((l) => (l.tags || []).includes(f.etiqueta));
+    if (f.contato) rows = rows.filter((l) => l.email || l.telefone);
+    rows.sort((x, y) => {
+      const a = x[f.ordem], c = y[f.ordem];
+      if (a == null && c == null) return 0;
+      if (a == null) return 1;
+      if (c == null) return -1;
+      const r = a < c ? -1 : a > c ? 1 : 0;
+      return f.asc ? r : -r;
+    });
+    return { rows: rows.slice(de, ate + 1), total: rows.length };
+  }
 
   const api = {
     async listarAutomacoes() {
@@ -175,6 +217,108 @@
         if (error) throw error;
         return data || [];
       } catch (e) { console.warn(e); return []; }
+    },
+
+    // ---------- Leads (aba Leads) ----------
+    // Lê da visão ig_leads_resumo (com o total de interações). Se a visão
+    // ainda não existe (falta rodar o 05_leads.sql), usa a tabela ig_leads.
+    async leads(f, de, ate) {
+      if (!USA_BANCO) return filtrarLeadsLocal(f, de, ate);
+      const consulta = (fonte, ordem) => {
+        let q = sb.from(fonte).select("*", { count: "exact" });
+        const b = limparBusca(f.busca);
+        if (b) q = q.or(["username", "email", "telefone", "last_keyword", "ig_user_id"].map((c) => `${c}.ilike.*${b}*`).join(","));
+        if (f.origem) q = q.eq("last_source", f.origem);
+        if (f.etiqueta) q = q.contains("tags", [f.etiqueta]);
+        if (f.contato) q = q.or("email.not.is.null,telefone.not.is.null");
+        return q.order(ordem, { ascending: f.asc, nullsFirst: false }).range(de, ate);
+      };
+      try {
+        let semView = false;
+        let r = await consulta("ig_leads_resumo", f.ordem);
+        if (r.error && /ig_leads_resumo|PGRST205|42P01|does not exist/i.test(`${r.error.code} ${r.error.message}`)) {
+          semView = true;
+          const ordem = ["interacoes", "ultima_entrega", "automacao_nome"].includes(f.ordem) ? "created_at" : f.ordem;
+          r = await consulta("ig_leads", ordem);
+          if (!r.error) r.data = (r.data || []).map((l) => ({ ...l, automacao_nome: autosMapa[l.automation_id] || null }));
+        }
+        if (r.error) throw r.error;
+        return { rows: r.data || [], total: r.count || 0, semView };
+      } catch (e) { console.warn(e); return { rows: [], total: 0, erro: e.message }; }
+    },
+
+    async resumoLeads() {
+      if (!USA_BANCO) {
+        const ls = leadsLocalTodos();
+        const desde = Date.now() - 7 * 864e5;
+        return { total: ls.length, contato: ls.filter((l) => l.email || l.telefone).length,
+          novos: ls.filter((l) => new Date(l.created_at).getTime() >= desde).length, link: ls.filter((l) => l.link_sent).length };
+      }
+      const desde = new Date(Date.now() - 7 * 864e5).toISOString();
+      const base = () => sb.from("ig_leads").select("ig_user_id", { count: "exact", head: true });
+      const [total, contato, novos, link] = await Promise.all([
+        contar(base()),
+        contar(base().or("email.not.is.null,telefone.not.is.null")),
+        contar(base().gte("created_at", desde)),
+        contar(base().eq("link_sent", true)),
+      ]);
+      return { total, contato, novos, link };
+    },
+
+    // Todas as etiquetas já usadas (pro filtro e pras sugestões)
+    async etiquetas() {
+      let listas = [];
+      if (!USA_BANCO) listas = store.get(CHAVE_LEADS, []).map((l) => l.tags || []);
+      else {
+        try {
+          const { data, error } = await sb.from("ig_leads").select("tags").neq("tags", "{}").limit(1000);
+          if (error) throw error;
+          listas = (data || []).map((l) => l.tags || []);
+        } catch (e) { console.warn(e); }
+      }
+      return Array.from(new Set(listas.flat())).sort((a, b) => a.localeCompare(b, "pt-BR"));
+    },
+
+    async historicoLead(id) {
+      if (!USA_BANCO) return store.get(CHAVE_ENTREGAS, []).filter((d) => d.ig_user_id === id).sort((a, b) => (a.ts < b.ts ? 1 : -1)).slice(0, 50);
+      try {
+        const { data, error } = await sb.from("ig_deliveries").select("ts, canal, tipo, status, motivo, automation_id")
+          .eq("ig_user_id", id).order("ts", { ascending: false }).limit(50);
+        if (error) throw error;
+        return data || [];
+      } catch (e) { console.warn(e); return []; }
+    },
+
+    async atualizarLead(id, campos) {
+      if (!USA_BANCO) {
+        const ls = store.get(CHAVE_LEADS, []);
+        const l = ls.find((x) => x.ig_user_id === id);
+        if (l) Object.assign(l, campos);
+        store.set(CHAVE_LEADS, ls);
+        return true;
+      }
+      try {
+        const { error } = await sb.from("ig_leads").update(campos).eq("ig_user_id", id);
+        if (error) throw error;
+        return true;
+      } catch (e) { console.warn(e); return false; }
+    },
+
+    // Apaga TUDO de um lead (pedido de exclusão da LGPD)
+    async excluirLead(id) {
+      if (!USA_BANCO) {
+        store.set(CHAVE_LEADS, store.get(CHAVE_LEADS, []).filter((l) => l.ig_user_id !== id));
+        store.set(CHAVE_ENTREGAS, store.get(CHAVE_ENTREGAS, []).filter((d) => d.ig_user_id !== id));
+        return true;
+      }
+      try {
+        const rs = await Promise.all(["ig_deliveries", "ig_send_queue", "ig_scheduled"].map((t) => sb.from(t).delete().eq("ig_user_id", id)));
+        const falha = rs.find((r) => r.error);
+        if (falha) throw falha.error;
+        const { error } = await sb.from("ig_leads").delete().eq("ig_user_id", id);
+        if (error) throw error;
+        return true;
+      } catch (e) { console.warn(e); return false; }
     },
 
     // Edge Functions (só no ar, com login)
@@ -391,7 +535,7 @@
 
   // ---------- Instagram ----------
   function telaInstagram(sub) {
-    if (sub !== "automacoes") sub = "metricas";
+    if (!["automacoes", "leads"].includes(sub)) sub = "metricas";
     conteudo().innerHTML = `
       <div class="cabecalho">
         <div>
@@ -402,9 +546,11 @@
       <nav class="abas">
         <a href="#/instagram/metricas" class="${sub === "metricas" ? "ativo" : ""}">Métricas</a>
         <a href="#/instagram/automacoes" class="${sub === "automacoes" ? "ativo" : ""}">Automações</a>
+        <a href="#/instagram/leads" class="${sub === "leads" ? "ativo" : ""}">Leads</a>
       </nav>
       <div id="sub-conteudo"></div>`;
     if (sub === "automacoes") return telaAutomacoes();
+    if (sub === "leads") return telaLeads();
     return telaMetricas();
   }
 
@@ -417,7 +563,7 @@
 
     const blocoLeads = `
       <div class="cartao" style="margin-top:16px">
-        <div class="linha-topo"><h3>Últimos leads</h3><span class="muted" style="font-size:13px">${fmtNum(cont.leads)} no total</span></div>
+        <div class="linha-topo"><h3>Últimos leads</h3><span class="muted" style="font-size:13px">${fmtNum(cont.leads)} no total · <a href="#/instagram/leads">ver todos</a></span></div>
         ${leads.length ? `<div style="overflow-x:auto;margin-top:10px"><table class="tabela">
           <thead><tr><th>Usuário</th><th>Palavra</th><th>Origem</th><th>Contato</th><th>Desde</th></tr></thead>
           <tbody>${leads.map((l) => `<tr>
@@ -539,6 +685,321 @@
       if (await api.alternarAtiva(id, b.checked)) { toast(b.checked ? "Automação ligada." : "Automação desligada."); telaAutomacoes(); }
       else { b.checked = !b.checked; toast("Não foi possível alterar. Tente de novo.", "erro"); }
     };
+  }
+
+  // ---------- Leads (planilha) ----------
+  const ORIGENS = { comment: "Comentário", dm: "Direct", story_reply: "Story" };
+  const CANAIS = { private_reply: "Resposta ao comentário", dm: "Direct" };
+  const SITUACAO = { ok: ["ok", "Enviado"], erro: ["erro", "Erro"], na_fila: ["fila", "Na fila"] };
+  // Filtros e ordem atuais (ficam guardados enquanto a página estiver aberta)
+  const LD = { busca: "", origem: "", etiqueta: "", contato: false, ordem: "created_at", asc: false, pagina: 0, porPagina: 50 };
+  let ldLinhas = [];     // linhas da página atual
+  let ldSemView = false; // true = falta rodar o 05_leads.sql
+  let ldEtiquetas = [];
+  let ldTimer = null;
+
+  const COLUNAS = [
+    { k: "username", t: "Usuário" },
+    { k: "last_source", t: "Origem" },
+    { k: "last_keyword", t: "Palavra" },
+    { k: "email", t: "Contato" },
+    { k: null, t: "Etiquetas" },
+    { k: "interacoes", t: "Interações", view: true, dica: "Mensagens que o robô entregou pra essa pessoa" },
+    { k: "link_sent", t: "Link" },
+    { k: "created_at", t: "Primeiro contato" },
+    { k: "ultima_entrega", t: "Última interação", view: true },
+  ];
+
+  const fmtData = (iso, comHora) => {
+    if (!iso) return "";
+    const d = new Date(iso);
+    if (isNaN(d)) return "";
+    return d.toLocaleDateString("pt-BR") + (comHora ? " " + d.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }) : "");
+  };
+  const fmtTel = (t) => {
+    const m = String(t || "").replace(/\D/g, "").match(/^(?:55)?(\d{2})(\d{4,5})(\d{4})$/);
+    return m ? `(${m[1]}) ${m[2]}-${m[3]}` : String(t || "");
+  };
+  const chips = (tags, max = 3) => {
+    const t = tags || [];
+    if (!t.length) return "";
+    return `<div class="chips">${t.slice(0, max).map((x) => `<span class="chip">${esc(x)}</span>`).join("")}${t.length > max ? `<span class="chip">+${t.length - max}</span>` : ""}</div>`;
+  };
+
+  async function telaLeads() {
+    const alvo = $("#sub-conteudo");
+    alvo.innerHTML = `
+      <div class="grade grade-4">
+        ${kpi("", "Total de leads", "ld-k-total", "pessoas que interagiram")}
+        ${kpi("", "Com contato", "ld-k-contato", "deixaram e-mail ou telefone")}
+        ${kpi("", "Novos", "ld-k-novos", "nos últimos 7 dias")}
+        ${kpi("", "Receberam link", "ld-k-link", "receberam um botão de link")}
+      </div>
+      <div class="cartao" style="margin-top:16px">
+        <div class="ferramentas">
+          <input type="search" id="ld-busca" placeholder="Buscar @, e-mail, telefone, palavra" value="${esc(LD.busca)}" aria-label="Buscar leads">
+          <select id="ld-origem" aria-label="Filtrar por origem">
+            <option value="">Todas as origens</option>
+            ${Object.entries(ORIGENS).map(([v, t]) => `<option value="${v}" ${LD.origem === v ? "selected" : ""}>${t}</option>`).join("")}
+          </select>
+          <select id="ld-etiqueta" aria-label="Filtrar por etiqueta"><option value="">Todas as etiquetas</option></select>
+          <label class="switch"><input type="checkbox" id="ld-contato" ${LD.contato ? "checked" : ""}><span class="trilho"></span><span>Só com contato</span></label>
+          <span class="espaco"></span>
+          <button class="btn" id="ld-exportar">${ICON.baixar} Exportar planilha</button>
+        </div>
+        <div id="ld-aviso"></div>
+        <div id="ld-tabela"><p class="muted">Carregando leads...</p></div>
+        <div id="ld-pag" class="paginacao"></div>
+      </div>`;
+
+    const recarregar = () => { LD.pagina = 0; carregarLeads(); };
+    $("#ld-busca").addEventListener("input", (e) => {
+      clearTimeout(ldTimer);
+      ldTimer = setTimeout(() => { LD.busca = e.target.value; recarregar(); }, 300);
+    });
+    $("#ld-origem").addEventListener("change", (e) => { LD.origem = e.target.value; recarregar(); });
+    $("#ld-etiqueta").addEventListener("change", (e) => { LD.etiqueta = e.target.value; recarregar(); });
+    $("#ld-contato").addEventListener("change", (e) => { LD.contato = e.target.checked; recarregar(); });
+    $("#ld-exportar").addEventListener("click", exportarLeads);
+
+    const tabela = $("#ld-tabela");
+    tabela.addEventListener("click", (e) => {
+      if (e.target.closest("a")) return; // link do perfil abre normal
+      const th = e.target.closest("[data-ordem]");
+      if (th) {
+        const k = th.dataset.ordem;
+        if (LD.ordem === k) LD.asc = !LD.asc; else { LD.ordem = k; LD.asc = ["username", "last_source", "last_keyword", "email"].includes(k); }
+        return recarregar();
+      }
+      const tr = e.target.closest("tr[data-lead]");
+      if (tr) abrirLead(tr.dataset.lead);
+    });
+    tabela.addEventListener("keydown", (e) => {
+      const tr = e.target.closest("tr[data-lead]");
+      if (tr && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); abrirLead(tr.dataset.lead); }
+    });
+    $("#ld-pag").addEventListener("click", (e) => {
+      const b = e.target.closest("[data-pg]");
+      if (b) { LD.pagina += Number(b.dataset.pg); carregarLeads(); }
+    });
+
+    // nomes das automações (pra ficha e pro modo sem a visão)
+    const autos = await api.listarAutomacoes();
+    autosMapa = Object.fromEntries(autos.map((a) => [a.id, a.nome || "Sem nome"]));
+    carregarKpisLeads();
+    carregarEtiquetas();
+    carregarLeads();
+  }
+
+  async function carregarKpisLeads() {
+    const r = await api.resumoLeads();
+    const por = { "ld-k-total": r.total, "ld-k-contato": r.contato, "ld-k-novos": r.novos, "ld-k-link": r.link };
+    Object.entries(por).forEach(([id, v]) => { const el = document.getElementById(id); if (el) el.textContent = fmtNum(v); });
+  }
+
+  async function carregarEtiquetas() {
+    ldEtiquetas = await api.etiquetas();
+    const sel = $("#ld-etiqueta");
+    if (!sel) return;
+    if (LD.etiqueta && !ldEtiquetas.includes(LD.etiqueta)) LD.etiqueta = "";
+    sel.innerHTML = `<option value="">Todas as etiquetas</option>` +
+      ldEtiquetas.map((t) => `<option value="${esc(t)}" ${LD.etiqueta === t ? "selected" : ""}>${esc(t)}</option>`).join("");
+  }
+
+  async function carregarLeads() {
+    if (!$("#ld-tabela")) return;
+    const de = LD.pagina * LD.porPagina;
+    const r = await api.leads(LD, de, de + LD.porPagina - 1);
+    const alvo = $("#ld-tabela");
+    if (!alvo) return; // trocou de tela enquanto carregava
+    ldLinhas = r.rows;
+    ldSemView = !!r.semView;
+
+    $("#ld-aviso").innerHTML = r.erro
+      ? `<p class="erro">Não foi possível carregar os leads: ${esc(r.erro)}</p>`
+      : ldSemView ? `<p class="alerta" style="margin:0 0 12px">Pra ver as interações e a última interação, rode o script <b>05_leads.sql</b> no Supabase (veja o LEIA-ME).</p>` : "";
+
+    if (!r.rows.length) {
+      const filtrando = LD.busca || LD.origem || LD.etiqueta || LD.contato;
+      alvo.innerHTML = `<div class="vazio" style="padding:36px 12px">
+        <div class="icone-grande">${ICON.usuarios}</div>
+        <h2>${filtrando ? "Nenhum lead encontrado" : "Ainda não tem leads"}</h2>
+        <p>${filtrando ? "Tente outra busca ou limpe os filtros." : "Eles aparecem aqui quando alguém comentar a palavra-chave de uma automação ligada."}</p>
+      </div>`;
+      $("#ld-pag").innerHTML = "";
+      return;
+    }
+
+    const cab = COLUNAS.map((c) => {
+      const ordenavel = c.k && !(c.view && ldSemView);
+      const ativo = ordenavel && LD.ordem === c.k;
+      const seta = ativo ? (LD.asc ? " ▲" : " ▼") : "";
+      const sort = ativo ? ` aria-sort="${LD.asc ? "ascending" : "descending"}"` : "";
+      const titulo = c.dica ? ` title="${esc(c.dica)}"` : "";
+      return ordenavel
+        ? `<th scope="col"${sort}${titulo}><button type="button" class="th-ordem" data-ordem="${c.k}">${c.t}${seta}</button></th>`
+        : `<th scope="col"${titulo}>${c.t}</th>`;
+    }).join("");
+
+    const linhas = r.rows.map((l) => `
+      <tr data-lead="${esc(l.ig_user_id)}" tabindex="0" aria-label="Abrir ficha de ${esc(l.username ? "@" + l.username : l.ig_user_id)}">
+        <td>${l.username ? `<a href="https://www.instagram.com/${encodeURIComponent(l.username)}/" target="_blank" rel="noopener">@${esc(l.username)}</a>` : `<span class="muted">ID ${esc(l.ig_user_id)}</span>`}</td>
+        <td>${esc(ORIGENS[l.last_source] || l.last_source || "")}</td>
+        <td>${esc(l.last_keyword || "")}${l.automacao_nome ? `<div class="sub">${esc(l.automacao_nome)}</div>` : ""}</td>
+        <td>${l.email ? `<div>${esc(l.email)}</div>` : ""}${l.telefone ? `<div>${esc(fmtTel(l.telefone))}</div>` : ""}${!l.email && !l.telefone ? `<span class="muted">sem contato</span>` : ""}</td>
+        <td>${chips(l.tags)}</td>
+        <td class="num">${ldSemView ? `<span class="muted">?</span>` : fmtNum(l.interacoes)}</td>
+        <td>${l.link_sent ? `<span class="selo ok">Sim</span>` : `<span class="selo off">Não</span>`}</td>
+        <td>${esc(fmtData(l.created_at))}</td>
+        <td>${esc(fmtData(l.ultima_entrega || l.updated_at, true))}</td>
+      </tr>`).join("");
+
+    alvo.innerHTML = `<div class="tabela-rolagem"><table class="tabela tabela-leads"><thead><tr>${cab}</tr></thead><tbody>${linhas}</tbody></table></div>`;
+
+    const ate = de + r.rows.length;
+    $("#ld-pag").innerHTML = `
+      <span>Mostrando ${fmtNum(de + 1)} a ${fmtNum(ate)} de ${fmtNum(r.total)}. Clique numa linha pra ver a ficha.</span>
+      <span>
+        <button class="btn btn-pequeno" data-pg="-1" ${LD.pagina === 0 ? "disabled" : ""}>Anterior</button>
+        <button class="btn btn-pequeno" data-pg="1" ${ate >= r.total ? "disabled" : ""}>Próxima</button>
+      </span>`;
+  }
+
+  // Baixa a planilha (CSV que abre no Excel e no Google Planilhas), com os filtros atuais
+  async function exportarLeads() {
+    const btn = $("#ld-exportar");
+    btn.disabled = true; btn.textContent = "Gerando...";
+    const todos = [];
+    let erro = "";
+    for (let de = 0; de < 20000; de += 1000) { // o banco devolve no máximo 1000 por vez
+      const r = await api.leads(LD, de, de + 999);
+      if (r.erro) { erro = r.erro; break; }
+      todos.push(...r.rows);
+      if (r.rows.length < 1000) break;
+    }
+    btn.disabled = false; btn.innerHTML = `${ICON.baixar} Exportar planilha`;
+    if (erro) return toast("Não foi possível exportar: " + erro, "erro", 5000);
+    if (!todos.length) return toast("Nenhum lead pra exportar com esses filtros.");
+
+    // Protege contra fórmulas (célula começando com = + - @ vira texto)
+    const cel = (v) => {
+      let s = String(v ?? "");
+      if (/^[=+\-@\t\r]/.test(s)) s = "'" + s;
+      return /[;"\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+    };
+    const cab = ["Usuário", "ID do Instagram", "Origem", "Palavra", "Automação", "E-mail", "Telefone", "Etiquetas", "Interações", "Recebeu link", "Primeiro contato", "Última interação", "Anotações"];
+    const linhas = todos.map((l) => [
+      l.username || "", l.ig_user_id, ORIGENS[l.last_source] || l.last_source || "", l.last_keyword || "",
+      l.automacao_nome || autosMapa[l.automation_id] || "", l.email || "", fmtTel(l.telefone), (l.tags || []).join(", "),
+      ldSemView ? "" : (l.interacoes ?? 0), l.link_sent ? "Sim" : "Não", fmtData(l.created_at, true),
+      fmtData(l.ultima_entrega || l.updated_at, true), (l.dados && l.dados.notas) || "",
+    ].map(cel).join(";"));
+    const csv = "﻿" + [cab.join(";"), ...linhas].join("\r\n");
+    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `leads-${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 2000);
+    toast(`Planilha com ${fmtNum(todos.length)} lead(s) baixada.`, "ok");
+  }
+
+  // Ficha do lead: dados, etiquetas, anotações, histórico e exclusão
+  async function abrirLead(id) {
+    const l = ldLinhas.find((x) => x.ig_user_id === id);
+    if (!l) return;
+    const est = { tags: [...(l.tags || [])], notas: (l.dados && l.dados.notas) || "" };
+    const nome = l.username ? "@" + l.username : "ID " + l.ig_user_id;
+    const extras = Object.entries(l.dados || {}).filter(([k]) => k !== "notas");
+    const info = (rot, val) => `<div><span class="rotulo">${rot}</span><div>${val || `<span class="muted">sem informação</span>`}</div></div>`;
+    const desenharTags = () => est.tags.map((t, i) => `<span class="chip">${esc(t)}<button type="button" data-del-tag="${i}" aria-label="Remover ${esc(t)}">×</button></span>`).join("");
+
+    abrirModal(`
+      <div class="modal-cab"><h2>${esc(nome)}</h2><button class="btn-icone" data-fechar aria-label="Fechar">${ICON.x}</button></div>
+      <div class="info-grade">
+        ${info("Origem", esc(ORIGENS[l.last_source] || l.last_source || ""))}
+        ${info("Palavra que ativou", esc(l.last_keyword || ""))}
+        ${info("Automação", esc(l.automacao_nome || autosMapa[l.automation_id] || ""))}
+        ${info("Recebeu link", l.link_sent ? "Sim" : "Não")}
+        ${info("E-mail", l.email ? `<a href="mailto:${esc(l.email)}">${esc(l.email)}</a>` : "")}
+        ${info("Telefone", l.telefone ? esc(fmtTel(l.telefone)) : "")}
+        ${info("Primeiro contato", esc(fmtData(l.created_at, true)))}
+        ${info("Última interação", esc(fmtData(l.ultima_entrega || l.updated_at, true)))}
+        ${ldSemView ? "" : info("Interações", fmtNum(l.interacoes))}
+        ${info("ID do Instagram", esc(l.ig_user_id))}
+        ${l.expecting && l.expecting.field ? info("Situação", `Esperando a pessoa mandar ${esc(l.expecting.field)}`) : ""}
+        ${extras.map(([k, v]) => info(esc(k), esc(typeof v === "object" ? JSON.stringify(v) : v))).join("")}
+        ${l.username ? info("Perfil", `<a href="https://www.instagram.com/${encodeURIComponent(l.username)}/" target="_blank" rel="noopener">abrir no Instagram</a>`) : ""}
+      </div>
+
+      <div class="campo">
+        <span class="rotulo">Etiquetas</span>
+        <div class="tags-box">
+          <span id="ld-tags" style="display:contents">${desenharTags()}</span>
+          <input type="text" id="ld-tag-input" list="ld-tag-sug" placeholder="Digite e aperte Enter (ex: cliente, quente)">
+        </div>
+        <datalist id="ld-tag-sug">${ldEtiquetas.map((t) => `<option value="${esc(t)}">`).join("")}</datalist>
+      </div>
+      <label class="campo">
+        <span class="rotulo">Anotações</span>
+        <textarea id="ld-notas" placeholder="Ex: pediu orçamento, retornar na segunda">${esc(est.notas)}</textarea>
+      </label>
+
+      <span class="rotulo">Histórico de mensagens do robô</span>
+      <div id="ld-hist"><p class="muted" style="font-size:14px">Carregando...</p></div>
+
+      <div class="modal-rodape" style="justify-content:space-between">
+        <button class="btn btn-perigo" data-excluir>${ICON.lixo} Excluir dados</button>
+        <span style="display:flex;gap:8px"><button class="btn" data-fechar>Fechar</button><button class="btn btn-primario" data-salvar>Salvar</button></span>
+      </div>`, async (e) => {
+      const del = e.target.closest("[data-del-tag]");
+      if (del) { est.tags.splice(+del.dataset.delTag, 1); $("#ld-tags").innerHTML = desenharTags(); return; }
+
+      if (e.target.closest("[data-salvar]")) {
+        adicionarTag();
+        const ok = await api.atualizarLead(id, { tags: est.tags, dados: { ...(l.dados || {}), notas: est.notas.trim() } });
+        if (!ok) return toast("Não foi possível salvar. Tente de novo.", "erro");
+        toast("Lead atualizado.", "ok");
+        fecharModal(); carregarLeads(); carregarEtiquetas();
+        return;
+      }
+
+      if (e.target.closest("[data-excluir]")) {
+        if (!confirm(`Apagar TODOS os dados de ${nome}?\n\nUse isso pra atender um pedido de exclusão (LGPD). Apaga o lead, o histórico e o que estiver na fila. Não dá pra desfazer.`)) return;
+        if (!(await api.excluirLead(id))) return toast("Não foi possível excluir. Tente de novo.", "erro");
+        toast("Dados do lead apagados.", "ok");
+        fecharModal(); carregarLeads(); carregarKpisLeads(); carregarEtiquetas();
+      }
+    }, "largo");
+
+    // Etiquetas: Enter ou vírgula adiciona
+    function adicionarTag() {
+      const inp = $("#ld-tag-input");
+      if (!inp) return;
+      inp.value.split(",").map((s) => s.trim().slice(0, 30)).filter(Boolean).forEach((t) => {
+        if (!est.tags.some((x) => x.toLowerCase() === t.toLowerCase())) est.tags.push(t);
+      });
+      inp.value = "";
+      $("#ld-tags").innerHTML = desenharTags();
+    }
+    const m = $("#modal");
+    m.onkeydown = (e) => {
+      if (e.target.id === "ld-tag-input" && (e.key === "Enter" || e.key === ",")) { e.preventDefault(); adicionarTag(); }
+    };
+    m.oninput = (e) => { if (e.target.id === "ld-notas") est.notas = e.target.value; };
+
+    // Histórico
+    const hist = await api.historicoLead(id);
+    const alvo = $("#ld-hist");
+    if (!alvo) return;
+    alvo.innerHTML = hist.length ? `<ul class="historico">${hist.map((d) => {
+      const [cls, txt] = SITUACAO[d.status] || ["off", d.status];
+      return `<li>
+        <span class="quando">${esc(fmtData(d.ts, true))}</span>
+        <span class="oque">${esc(autosMapa[d.automation_id] || "Automação apagada")}<span class="sub">${esc(CANAIS[d.canal] || d.canal || "")}</span>${d.status === "erro" && d.motivo ? `<span class="sub">${esc(d.motivo)}</span>` : ""}</span>
+        <span class="selo ${cls}">${esc(txt)}</span>
+      </li>`;
+    }).join("")}</ul>` : `<p class="muted" style="font-size:14px">Nenhuma mensagem registrada.</p>`;
   }
 
   // ===================================================================
@@ -1152,9 +1613,10 @@
   }
 
   // ---------- Modal genérico ----------
-  function abrirModal(html, aoClicar) {
+  function abrirModal(html, aoClicar, classe = "") {
     const m = $("#modal");
-    m.innerHTML = `<div class="modal" role="dialog" aria-modal="true">${html}</div>`;
+    m.oninput = null; m.onkeydown = null;
+    m.innerHTML = `<div class="modal ${classe}" role="dialog" aria-modal="true">${html}</div>`;
     m.hidden = false;
     m.onclick = (e) => {
       if (e.target === m || e.target.closest("[data-fechar]")) return fecharModal();

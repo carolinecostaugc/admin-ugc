@@ -36,6 +36,8 @@ Instagram. Os passos abaixo são pra colocar no ar de verdade.
    2. `supabase/sql/02_freio.sql` (as funções do freio)
    3. `supabase/sql/03_rls.sql` (regras de acesso)
    4. `supabase/sql/03b_storage.sql` (opcional: pasta de arquivos pra biblioteca de anexos)
+   5. `supabase/sql/05_leads.sql` (aba Leads: contagem de interações e limpeza diária;
+      rode depois do `04_agendamento.sql`, do passo 5)
 
    Confira se aparece "Success". Se der erro, o Supabase desfaz o script inteiro e as tabelas
    não são criadas (o painel continua abrindo, mas com tudo zerado e sem salvar).
