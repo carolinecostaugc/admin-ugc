@@ -492,7 +492,8 @@
     conteudo().innerHTML = `
       <div class="cabecalho">
         <div>
-          <h1>Bem-vindo ao seu painel</h1>
+          <p class="sobretitulo">Início</p>
+          <h1>Olá, que bom te ver por aqui</h1>
           <p class="muted">Uma visão rápida de como estão suas automações.</p>
         </div>
       </div>

@@ -4,44 +4,61 @@
    A cor de destaque é UMA só: --destaque (e as variações dela).
    ===================================================================== */
 :root {
-  /* Cor de destaque: troque aqui e o sistema todo muda */
-  --destaque: #2563EB;
-  --destaque-escuro: #1D4ED8;
-  --destaque-suave: #EFF4FF;
+  /* Identidade Caroline Costa (as mesmas cores do portfólio) */
+  --cortina: #f4f0e8;
+  --cortina-2: #ece4d7;
+  --areia: #d8c8ae;
+  --oliva: #5c6450;
+  --oliva-parede: #474e3d;
+  --salvia: #b3b9a3;
+  --carvalho: #8a6244;
+  --terracota: #b8633a;
+  --caramelo: #d99a5b;
+  --cafe: #1f1c19;
+  --cafe-2: #4a423a;
 
-  /* Neutros */
-  --fundo: #F7F8FA;
-  --superficie: #FFFFFF;
-  --superficie-2: #F3F4F6;
-  --texto: #1A1A1A;
-  --texto-2: #6B7280;
-  --borda: #E5E7EB;
-  --borda-forte: #D1D5DB;
+  /* Cor de destaque: o verde-oliva da marca */
+  --destaque: var(--oliva);
+  --destaque-escuro: var(--oliva-parede);
+  --destaque-suave: #e8eadf;
 
-  /* Status (separadas da cor de destaque) */
-  --sucesso: #16A34A;  --sucesso-suave: #ECFDF3;
-  --atencao: #CA8A04;  --atencao-suave: #FEFCE8;
-  --erro: #DC2626;     --erro-suave: #FEF2F2;
+  /* Neutros (tons de cortina e café) */
+  --fundo: var(--cortina);
+  --superficie: #fffcf6;
+  --superficie-2: #f1ebe0;
+  --texto: var(--cafe);
+  --texto-2: #6a5f53;
+  --borda: #e3dacc;
+  --borda-forte: #cfc2ae;
 
-  /* Prévia do celular */
+  /* Status (separadas da cor de destaque, em tons terrosos) */
+  --sucesso: #3f7a4a;  --sucesso-suave: #e6efe0;
+  --atencao: #96600f;  --atencao-suave: #f7ead4;
+  --erro: #b3412b;     --erro-suave: #f8e3da;
+
+  /* Prévia do celular (cores reais do Instagram) */
   --bolha-recebida: #EFEFEF;
-  --bolha-enviada: #3B82F6;
+  --bolha-enviada: #3797F0;
 
-  --raio: 10px;
-  --raio-g: 16px;
-  --sombra: 0 1px 2px rgba(16, 24, 40, .05), 0 1px 3px rgba(16, 24, 40, .06);
-  --sombra-g: 0 12px 32px rgba(16, 24, 40, .12);
-  --fonte: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --raio: 12px;
+  --raio-g: 18px;
+  --sombra: 0 1px 2px rgba(31, 28, 25, .05), 0 10px 28px -20px rgba(31, 28, 25, .35);
+  --sombra-g: 0 1px 2px rgba(31, 28, 25, .05), 0 22px 44px -24px rgba(31, 28, 25, .4);
+  --fonte: "Jost", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --serif: "Cormorant Garamond", "Cormorant", Georgia, "Times New Roman", serif;
+  /* Textura de grão e linho do portfólio */
+  --grao: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 .12 0 0 0 0 .11 0 0 0 0 .1 0 0 0 .08 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  --linho: repeating-linear-gradient(0deg, rgba(138,98,68,.03) 0 1px, transparent 1px 3px), repeating-linear-gradient(90deg, rgba(138,98,68,.025) 0 1px, transparent 1px 4px);
   color-scheme: light;
 }
 
 /* Tema escuro (opcional): ative com <html data-theme="dark"> */
 :root[data-theme="dark"] {
-  --destaque: #3B82F6; --destaque-escuro: #2563EB; --destaque-suave: #172036;
-  --fundo: #0F1115; --superficie: #171A21; --superficie-2: #1F232C;
-  --texto: #F3F4F6; --texto-2: #9CA3AF; --borda: #2A2F3A; --borda-forte: #3A4050;
-  --sucesso-suave: #0E2A1A; --atencao-suave: #2A240E; --erro-suave: #2D1414;
-  --bolha-recebida: #2A2F3A;
+  --destaque: #9aa58a; --destaque-escuro: #b3b9a3; --destaque-suave: #2a2e24;
+  --fundo: #171512; --superficie: #211e1a; --superficie-2: #2a2621;
+  --texto: #f4f0e8; --texto-2: #b5aa9b; --borda: #36312a; --borda-forte: #4a433a;
+  --sucesso-suave: #1c2a1d; --atencao-suave: #2e2414; --erro-suave: #33190f;
+  --bolha-recebida: #2a2621;
   color-scheme: dark;
 }
 
@@ -400,6 +417,93 @@ textarea.link-grande { min-height: 70px; font-family: ui-monospace, Consolas, mo
 .toast.on { opacity: 1; transform: translateX(-50%) translateY(0); }
 .toast.erro { background: var(--erro); color: #fff; }
 .toast.ok { background: var(--sucesso); color: #fff; }
+
+/* =====================================================================
+   IDENTIDADE CAROLINE COSTA
+   Acabamento da marca por cima do sistema de design.
+   ===================================================================== */
+body { background-color: var(--cortina); background-image: var(--grao), var(--linho); font-weight: 400; }
+::selection { background: var(--areia); color: var(--cafe); }
+
+/* Títulos e números grandes na serifada da marca */
+h1, h2, .kpi .valor, .vazio h2, .modal-cab h2 { font-family: var(--serif); letter-spacing: 0; }
+h1 { font-size: clamp(2rem, 4.5vw, 2.6rem); font-weight: 600; line-height: 1.05; }
+h2 { font-size: 1.5rem; font-weight: 600; }
+.cartao h2, .bloco-cab h2 { font-size: 1.45rem; }
+.kpi .valor { font-size: 2.6rem; font-weight: 600; line-height: 1.1; margin-top: 6px; }
+/* Algarismos "modernos" (o 0 não parece O e o 1 não parece I) */
+h1, h2, .kpi .valor, .marca-nome { font-variant-numeric: lining-nums tabular-nums; font-feature-settings: "lnum" 1, "tnum" 1; }
+.rotulo, .tabela th, .sobretitulo { letter-spacing: .16em; }
+.sobretitulo { font-size: 11.5px; text-transform: uppercase; font-weight: 500; color: var(--oliva); margin: 0 0 6px; }
+
+/* Botões em pílula, como no portfólio */
+.btn { border-radius: 999px; padding: 10px 18px; font-weight: 500; }
+.btn-pequeno { padding: 7px 13px; }
+.btn-primario { box-shadow: 0 12px 26px -14px rgba(61, 67, 53, .8); }
+.btn-primario:hover { transform: translateY(-1px); }
+.btn-icone { border-radius: 999px; }
+.opcao, .passo, .botao-ed, .tags-box, input, textarea, select { border-radius: 12px; }
+.chip { background: var(--cortina-2); border-color: transparent; }
+
+/* Cartões em creme com a sombra suave do portfólio */
+.cartao { background: var(--superficie); border-color: var(--borda); }
+.kpi { position: relative; overflow: hidden; }
+.kpi::after { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; background: var(--terracota); opacity: .85; }
+.kpi:nth-child(2)::after { background: var(--oliva); }
+.kpi:nth-child(3)::after { background: var(--caramelo); }
+.kpi:nth-child(4)::after { background: var(--carvalho); }
+.vazio .icone-grande { background: var(--cortina-2); color: var(--oliva); }
+.banner { background: #f6ead6; color: var(--cafe-2); border-bottom-color: var(--borda); }
+.toast { background: var(--cafe); color: var(--cortina); }
+
+/* Logo (máscaras do teatro dentro da câmera) */
+.logo-marca { width: 40px; height: 34px; flex-shrink: 0; }
+.logo-marca.grande { width: 58px; height: 48px; }
+.logo-marca .corpo { fill: none; stroke: var(--cafe); stroke-width: 1.6; stroke-linejoin: round; }
+.logo-marca .rec { fill: var(--terracota); }
+.logo-marca .comedia { fill: var(--oliva); }
+.logo-marca .tragedia { fill: var(--carvalho); }
+.logo-marca .rosto { fill: none; stroke: var(--cortina); stroke-width: 1.1; stroke-linecap: round; }
+.marca-nome { font-family: var(--serif); font-weight: 500; font-size: 1.45rem; line-height: 1; color: inherit; }
+.marca-nome em { font-style: italic; }
+
+/* Menu lateral em café, como o rodapé do portfólio */
+.sidebar { background-color: var(--cafe); background-image: var(--grao); border-right: 0; color: var(--cortina); }
+.sidebar .marca { text-decoration: none; color: var(--cortina); gap: 10px; }
+.sidebar .marca-texto { display: flex; flex-direction: column; gap: 4px; }
+.sidebar .marca-nome em { color: var(--salvia); }
+.sidebar .marca-sub { font-size: 10px; letter-spacing: .24em; text-transform: uppercase; color: #a89d8e; }
+.sidebar .logo-marca .corpo { stroke: var(--cortina); }
+.sidebar .logo-marca .comedia { fill: var(--salvia); }
+.sidebar .logo-marca .tragedia { fill: var(--caramelo); }
+.sidebar .logo-marca .rosto { stroke: var(--cafe); }
+.sidebar-topo { padding-bottom: 26px; }
+.menu a { color: #d9d0c3; font-size: 12px; font-weight: 450; letter-spacing: .18em; text-transform: uppercase; padding: 11px 12px; border-radius: 10px; }
+.menu a:hover { background: rgba(244, 240, 232, .07); color: var(--cortina); }
+.menu a.ativo { background: rgba(244, 240, 232, .1); color: #fff; box-shadow: inset 3px 0 0 var(--caramelo); }
+.menu a:focus-visible, .sidebar .btn:focus-visible, .sidebar .marca:focus-visible { outline: 2px solid var(--caramelo); outline-offset: 2px; }
+.sidebar-rodape { border-top-color: rgba(244, 240, 232, .14); }
+.usuario { color: #a89d8e; }
+.sidebar .btn-fantasma { color: #d9d0c3; }
+.sidebar .btn-fantasma:hover { background: rgba(244, 240, 232, .07); color: var(--cortina); }
+.sidebar .btn-icone { color: var(--cortina); }
+.sidebar .btn-icone:hover { background: rgba(244, 240, 232, .1); color: #fff; }
+
+/* Login com a marca */
+.login { background-color: var(--cortina); background-image: var(--grao), var(--linho); }
+.login-card { padding: 36px 32px; box-shadow: var(--sombra-g); }
+.login-marca { display: flex; align-items: center; gap: 12px; margin-bottom: 26px; color: var(--cafe); }
+.login-marca .marca-nome { font-size: 1.9rem; }
+.login-marca .marca-nome em { color: var(--oliva); }
+.login-card h1 { font-size: 2rem; margin: 0 0 6px; }
+.aviso-local { background: var(--cortina-2); }
+
+/* Abas e editor */
+.abas a { font-weight: 500; }
+.ed-topo { background: var(--superficie); }
+.ed-topo .nome-auto { font-family: var(--serif); font-size: 1.35rem; font-weight: 600; }
+.bloco-num { background: var(--cafe); color: var(--cortina); border-radius: 999px; font-size: 13px; font-weight: 500; }
+.celular { border-color: var(--cafe); }
 
 /* ---------------- Responsivo ---------------- */
 @media (max-width: 960px) {
