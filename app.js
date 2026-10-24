@@ -178,16 +178,22 @@
     },
 
     // Edge Functions (só no ar, com login)
+    // Sempre devolve um objeto; se falhar, vem { connected: false, erro: "motivo" }
     async funcao(nome) {
-      if (!USA_BANCO) return null;
+      if (!USA_BANCO) return { connected: false };
       try {
         const { data, error } = await sb.functions.invoke(nome);
-        if (error) throw error;
-        return data;
-      } catch (e) { console.warn(`${nome}:`, e); return null; }
+        if (error) {
+          let msg = error.message;
+          try { const j = await error.context.json(); msg = j.erro || msg; } catch (_) { /* sem corpo */ }
+          console.warn(`${nome}:`, msg);
+          return { connected: false, erro: msg };
+        }
+        return data || { connected: false };
+      } catch (e) { console.warn(`${nome}:`, e); return { connected: false, erro: String(e && e.message || e) }; }
     },
-    async insights() { return (await api.funcao("ig-insights")) || { connected: false }; },
-    async posts() { return (await api.funcao("ig-media")) || { connected: false, posts: [] }; },
+    async insights() { return api.funcao("ig-insights"); },
+    async posts() { return { posts: [], ...(await api.funcao("ig-media")) }; },
 
     // Biblioteca de arquivos
     async listarArquivos() {
@@ -429,6 +435,7 @@
           <div class="icone-grande">${ICON.instagram}</div>
           <h2>Conecte seu Instagram pra ver as métricas</h2>
           <p>Quando o Supabase e a API do Instagram estiverem configurados (veja o LEIA-ME), seus seguidores e o alcance aparecem aqui.</p>
+          ${diagnostico(ins)}
         </div>
         <div class="grade grade-3" style="margin-top:16px">
           <div class="cartao kpi"><span class="rotulo">Leads captados</span><div class="valor">${fmtNum(cont.leads)}</div><div class="sub">vem do seu banco</div></div>
@@ -450,6 +457,19 @@
         <div class="cartao"><h3>Alcance por dia</h3><p class="muted" style="font-size:13px">${fmtNum(somaAlcance)} no período</p>${barras(ins.reach, "contas")}</div>
       </div>
       ${blocoLeads}`;
+  }
+
+  // Explica por que as métricas não carregaram (mostra o que falta configurar)
+  function diagnostico(r) {
+    if (!USA_BANCO || !r || !r.erro) return "";
+    const e = String(r.erro);
+    let dica = "Confira os segredos do Instagram no Supabase (Edge Functions > Secrets).";
+    if (/IG_ACCESS_TOKEN/.test(e)) dica = "Falta o token do Instagram: crie o segredo IG_ACCESS_TOKEN no Supabase (Edge Functions > Secrets).";
+    else if (/\b190\b|expired|Invalid OAuth|access token/i.test(e)) dica = "O token do Instagram é inválido ou venceu. Gere um novo no Meta e atualize o segredo IG_ACCESS_TOKEN.";
+    else if (/\b(10|100|200)\b|permission/i.test(e)) dica = "O token não tem a permissão necessária, ou o IG_ACCOUNT_ID está errado. Gere o token de novo no Meta e confira o id da conta.";
+    else if (/login|401/i.test(e)) dica = "Sua sessão expirou. Saia e entre de novo.";
+    else if (/fetch|Failed to send|network/i.test(e)) dica = "Não foi possível falar com a função ig-insights. Confira se ela está publicada no Supabase.";
+    return `<p class="alerta" style="max-width:520px;margin:0 auto 8px;text-align:left"><strong>O que falta:</strong> ${esc(dica)}<br><span class="muted" style="font-size:12px">Detalhe técnico: ${esc(e)}</span></p>`;
   }
 
   // Mini gráfico de barras com hover mostrando o número de cada dia
