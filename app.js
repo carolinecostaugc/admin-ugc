@@ -910,7 +910,8 @@
     if (!l) return;
     const est = { tags: [...(l.tags || [])], notas: (l.dados && l.dados.notas) || "" };
     const nome = l.username ? "@" + l.username : "ID " + l.ig_user_id;
-    const extras = Object.entries(l.dados || {}).filter(([k]) => k !== "notas");
+    // campos internos (começam com "_") não aparecem na ficha
+    const extras = Object.entries(l.dados || {}).filter(([k]) => k !== "notas" && !k.startsWith("_"));
     const info = (rot, val) => `<div><span class="rotulo">${rot}</span><div>${val || `<span class="muted">sem informação</span>`}</div></div>`;
     const desenharTags = () => est.tags.map((t, i) => `<span class="chip">${esc(t)}<button type="button" data-del-tag="${i}" aria-label="Remover ${esc(t)}">×</button></span>`).join("");
 

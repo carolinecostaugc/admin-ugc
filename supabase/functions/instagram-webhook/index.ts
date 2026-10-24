@@ -5,7 +5,7 @@
 // Publicar SEMPRE com --no-verify-jwt (o Meta não manda login do Supabase).
 // =====================================================================
 import {
-  acharPasso, type Automation, casaPalavra, db, enviarPrimeiroPasso, env, errMsg, graph, IG_ACCOUNT_ID,
+  acharPasso, type Automation, casaPalavra, db, enviarPrimeiroPasso, env, errMsg, garantirUsername, graph, IG_ACCOUNT_ID,
   jaRecebeuHoje, logEntrega, pegarFicha, primeiraVez, salvarLead, sendMessage, sendStep, type Step, tipoDoPasso,
 } from "../_shared/ig.ts";
 
@@ -163,6 +163,15 @@ async function handleMessage(m: any) {
   // Echo = mensagem que a própria conta mandou (pelo robô ou na mão): ignora
   if (m.message?.is_echo || senderId === IG_ACCOUNT_ID) return;
 
+  try {
+    await processarMensagem(m, senderId);
+  } finally {
+    // mensagens do direct não trazem o @: busca no Instagram se o lead estiver sem
+    await garantirUsername(senderId);
+  }
+}
+
+async function processarMensagem(m: any, senderId: string) {
   const mid: string = m.message?.mid ?? m.postback?.mid ?? "";
   if (mid) {
     const { data: doRobo } = await db().from("ig_bot_sends").select("mid").eq("mid", mid).maybeSingle();

@@ -308,6 +308,22 @@ export async function salvarLead(userId: string, campos: Record<string, unknown>
   if (error) console.error("salvarLead:", error.message);
 }
 
+// Garante que o lead tenha o @. Comentários já trazem o @, mas mensagens do
+// direct e respostas a story trazem só o número: aí pergunta ao Instagram.
+// Se o Instagram não informar (ex: conta bloqueou), marca a tentativa em
+// dados._username_falhou pra não ficar tentando todo minuto.
+export async function garantirUsername(userId: string) {
+  const { data: lead } = await db().from("ig_leads").select("username, dados").eq("ig_user_id", userId).maybeSingle();
+  if (!lead || lead.username) return;
+  const r = await graph(`/${userId}`, { params: { fields: "username,name" } });
+  if (r.ok && r.data?.username) {
+    await salvarLead(userId, { username: r.data.username });
+  } else {
+    console.warn(`não consegui o @ de ${userId}:`, errMsg(r.error));
+    await salvarLead(userId, { dados: { ...(lead.dados ?? {}), _username_falhou: new Date().toISOString() } });
+  }
+}
+
 export async function logEntrega(row: {
   ig_user_id: string; automation_id: string | null; canal: string; tipo: string; status: string; motivo?: string;
 }) {

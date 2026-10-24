@@ -6,7 +6,7 @@
 // Publicar com --no-verify-jwt (o pg_cron não manda login).
 // =====================================================================
 import {
-  acharPasso, type Automation, chaveAgendadorOk, db, enviarPrimeiroPasso, errMsg, json, logEntrega,
+  acharPasso, type Automation, chaveAgendadorOk, db, enviarPrimeiroPasso, errMsg, garantirUsername, json, logEntrega,
   pegarFicha, salvarLead, sendStep, tipoDoPasso,
 } from "../_shared/ig.ts";
 
@@ -16,7 +16,7 @@ const MAX_TENTATIVAS = 3;
 Deno.serve(async (req) => {
   if (!chaveAgendadorOk(req)) return json({ erro: "não autorizado" }, 401);
 
-  const resumo = { enviados: 0, erros: 0, expirados: 0, sem_ficha: false, agendados_enviados: 0 };
+  const resumo = { enviados: 0, erros: 0, expirados: 0, sem_ficha: false, agendados_enviados: 0, usernames_buscados: 0 };
 
   // ---------------- 1) Fila do freio ----------------
   const { data: fila } = await db().from("ig_send_queue").select("*")
@@ -75,6 +75,12 @@ Deno.serve(async (req) => {
     });
     if (res.ok) resumo.agendados_enviados++;
   }
+
+  // ---------------- 3) Completa o @ de leads que chegaram sem ----------------
+  const { data: semNome } = await db().from("ig_leads").select("ig_user_id")
+    .is("username", null).is("dados->>_username_falhou", null).limit(10);
+  for (const l of semNome ?? []) await garantirUsername(l.ig_user_id);
+  resumo.usernames_buscados = semNome?.length ?? 0;
 
   return json(resumo);
 });
