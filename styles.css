@@ -605,6 +605,19 @@ input[type="date"]:focus { outline: none; border-color: var(--destaque); box-sha
 .arq-lista .arq-nome { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .arq-lista li.pendente { color: var(--texto-2); }
 
+/* ---------------- Mentora ---------------- */
+.grade-5 { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+.grade-5 .kpi .valor { font-size: 2.1rem; }
+.compra-linha {
+  display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(0, .8fr) minmax(0, 1fr) minmax(0, 1.1fr) minmax(0, .8fr) auto;
+  gap: 8px; align-items: end; padding: 10px 0; border-bottom: 1px solid var(--borda);
+}
+.compra-linha .campo { margin-bottom: 0; }
+.compra-linha .rotulo { font-size: 10px; }
+.compra-linha input, .compra-linha select, .compra-linha input[type="date"] { padding: 8px 10px; font-size: 13.5px; }
+.compra-linha .btn-icone { margin-bottom: 2px; }
+#cl-compras + .btn { margin-top: 10px; }
+
 /* ---------------- Documentos ---------------- */
 .doc-barra { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin-bottom: 14px; }
 .doc-barra input[type="search"] { flex: 0 1 320px; margin-left: auto; }
@@ -772,6 +785,10 @@ h1, h2, .kpi .valor, .marca-nome { font-variant-numeric: lining-nums tabular-num
   .ed-previa-col { position: static; }
   .grade-3 { grid-template-columns: 1fr 1fr; }
   .grade-4 { grid-template-columns: 1fr 1fr; }
+  .grade-5 { grid-template-columns: 1fr 1fr; }
+  .compra-linha { grid-template-columns: 1fr 1fr; }
+  .compra-linha .campo:first-child { grid-column: 1 / -1; }
+  .compra-linha .btn-icone { justify-self: end; }
 }
 @media (max-width: 900px) {
   .quadro { grid-template-columns: 1fr; }

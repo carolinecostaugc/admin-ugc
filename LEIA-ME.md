@@ -46,6 +46,8 @@ Instagram. Os passos abaixo são pra colocar no ar de verdade.
       privada dos contratos)
    9. `supabase/sql/09_ugc_mensagens.sql` (campos Mensagem 1 e Mensagem 2 nas propostas;
       só é necessário se você rodou o 08 antes desse campo existir)
+   10. `supabase/sql/10_mentora.sql` (área Mentora: leads da prospecção de clientes e as
+       compras de cada cliente)
 
    Confira se aparece "Success". Se der erro, o Supabase desfaz o script inteiro e as tabelas
    não são criadas (o painel continua abrindo, mas com tudo zerado e sem salvar).

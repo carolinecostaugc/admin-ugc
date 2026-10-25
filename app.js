@@ -58,6 +58,8 @@
     editar: svg('<path d="M4 20h4L19 9l-4-4L4 16z"/>'),
     voltar: svg('<path d="M15 18l-6-6 6-6"/>'),
     avancar: svg('<path d="M9 18l6-6-6-6"/>'),
+    // Mentora (capelo)
+    mentora: svg('<path d="M12 4 2.5 8.8 12 13.6l9.5-4.8z"/><path d="M6.5 10.9v4.4c0 1.5 2.5 3.2 5.5 3.2s5.5-1.7 5.5-3.2v-4.4M21.5 8.8v5"/>'),
     // UGC (claquete) e contato
     ugc: svg('<path d="M3.5 10h17v9a1.5 1.5 0 0 1-1.5 1.5H5A1.5 1.5 0 0 1 3.5 19z"/><path d="M3.5 10 4.6 5.6a1.5 1.5 0 0 1 1.8-1.1l13 3.2-.9 2.3M8.5 5.4l1.6 3.6M13.5 6.6l1.6 3.4"/>'),
     email: svg('<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3.5 6.5 12 13l8.5-6.5"/>'),
@@ -753,6 +755,7 @@
     if (rota === "calendario") return telaCalendario(partes[1] || "quadro");
     if (rota === "documentos") return telaDocumentos(partes[1] || null);
     if (rota === "ugc") return telaUgc(partes[1] || "prospeccao");
+    if (rota === "mentora") return telaMentora(partes[1] || "prospeccao");
     if (rota === "instagram") return telaInstagram(partes[1] || "metricas");
     return telaInicio();
   }
@@ -2719,6 +2722,743 @@
       fecharModal();
       toast(r.local ? "Salvo neste navegador (modo de teste)." : "Marca salva.", "ok");
       recarregarUgc();
+    }
+  }
+
+  // ===================================================================
+  // Arrastar e soltar cards entre colunas (peça reutilizável)
+  //   est: objeto que guarda { arrastando, soltou }
+  //   seletor: classe dos cards (ex: ".card-lead")
+  //   ordemDe(id): posição atual do card; aoSoltar(id, status, ordem)
+  // ===================================================================
+  function ligarArrastar(alvo, est, seletor, ordemDe, aoSoltar, redesenhar) {
+    const cardArrastado = () => est.arrastando && alvo.querySelector(`${seletor}[data-id="${CSS.escape(est.arrastando)}"]`);
+    alvo.ondragstart = (e) => {
+      const card = e.target.closest(seletor);
+      if (!card) return;
+      est.soltou = false; est.arrastando = card.dataset.id;
+      e.dataTransfer.effectAllowed = "move";
+      e.dataTransfer.setData("text/plain", card.dataset.id);
+      setTimeout(() => card.classList.add("arrastando"), 0);
+    };
+    alvo.ondragover = (e) => {
+      const col = e.target.closest(".coluna");
+      const lista = col && col.querySelector(".coluna-lista");
+      const card = cardArrastado();
+      if (!lista || !card) return;
+      e.preventDefault();
+      $$(".coluna-lista.alvo").forEach((l) => l !== lista && l.classList.remove("alvo"));
+      lista.classList.add("alvo");
+      const depois = [...lista.querySelectorAll(seletor)].filter((c) => c !== card)
+        .find((c) => { const r = c.getBoundingClientRect(); return e.clientY < r.top + r.height / 2; });
+      if (depois) lista.insertBefore(card, depois); else lista.appendChild(card);
+    };
+    alvo.ondrop = (e) => {
+      const card = cardArrastado();
+      const lista = card && card.closest(".coluna-lista");
+      if (!lista) return;
+      e.preventDefault();
+      est.soltou = true;
+      const ids = [...lista.querySelectorAll(seletor)].map((x) => x.dataset.id);
+      const i = ids.indexOf(card.dataset.id);
+      const ant = ids[i - 1], prox = ids[i + 1];
+      aoSoltar(card.dataset.id, lista.dataset.status, ant && prox ? (ordemDe(ant) + ordemDe(prox)) / 2 : ant ? ordemDe(ant) + 1 : prox ? ordemDe(prox) - 1 : 0);
+    };
+    alvo.ondragend = () => {
+      $$(".coluna-lista.alvo").forEach((l) => l.classList.remove("alvo"));
+      const c = cardArrastado();
+      if (c) c.classList.remove("arrastando");
+      est.arrastando = null;
+      if (!est.soltou) redesenhar();
+    };
+  }
+
+  // Célula de CSV protegida (abre certo no Excel e não vira fórmula)
+  const celulaCsv = (v) => {
+    let s = String(v ?? "");
+    if (/^[=+\-@\t\r]/.test(s)) s = "'" + s;
+    return /[;"\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+  function baixarCsv(nome, cabecalho, linhas) {
+    const csv = "﻿" + [cabecalho.map(celulaCsv).join(";"), ...linhas.map((l) => l.map(celulaCsv).join(";"))].join("\r\n");
+    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+    const a = document.createElement("a");
+    a.href = url; a.download = nome;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 2000);
+  }
+  const valorCsv = (v) => (v != null && v !== "" ? String(v).replace(".", ",") : "");
+
+  // ===================================================================
+  // MENTORA: prospecção de clientes (leads) e Clientes (compras)
+  // Quando um lead vai pra "Virou cliente", ele aparece na aba Clientes
+  // e a compra do produto oferecido é registrada sozinha.
+  // ===================================================================
+  const ETAPAS_M = [
+    { s: "abordar", t: "Para abordar", cls: "enviar" },
+    { s: "abordado", t: "Abordado", cls: "enviada" },
+    { s: "respondeu", t: "Respondeu", cls: "respondeu" },
+    { s: "negociacao", t: "Em negociação", cls: "negociacao" },
+    { s: "cliente", t: "Virou cliente", cls: "aprovado" },
+    { s: "nao_deu", t: "Não deu", cls: "nao_deu" },
+  ];
+  const ETAPA_M = Object.fromEntries(ETAPAS_M.map((e, i) => [e.s, { ...e, i }]));
+  const RESPONDEU_M = ["respondeu", "negociacao", "cliente"];
+  const ABERTAS_M = ["abordado", "respondeu", "negociacao"];
+  const PAGAMENTO = { pago: "Pago", parcial: "Parcial", pendente: "Pendente" };
+  const ORIGENS_M = ["Instagram", "Indicação", "Anúncio", "Evento", "Lista de espera", "WhatsApp", "Site"];
+  const MT = {
+    sub: "prospeccao", vista: "quadro", leads: [], compras: [], busca: "", canal: "",
+    ordem: "data_contato", asc: false, buscaC: "", ordemC: "ultima", ascC: false,
+    semTabela: false, erro: "", arrastando: null, soltou: false,
+  };
+  const classeEtapaM = (s) => "etapa-" + ((ETAPA_M[s] || {}).cls || "enviar");
+  const nomeEtapaM = (s) => (ETAPA_M[s] || {}).t || s;
+  const comprasDe = (id) => MT.compras.filter((c) => c.lead_id === id).sort((a, b) => (a.data_compra < b.data_compra ? -1 : 1));
+  const produtosConhecidos = () => Array.from(new Set([...MT.leads.map((l) => l.produto), ...MT.compras.map((c) => c.produto)]
+    .filter(Boolean).map((s) => s.trim()))).sort((a, b) => a.localeCompare(b, "pt-BR"));
+
+  async function carregarMentora() {
+    const [l, c] = await Promise.all([api.listar("mentora_leads", "ordem"), api.listar("mentora_compras", "data_compra")]);
+    MT.leads = l.rows;
+    MT.compras = c.rows;
+    MT.semTabela = !!(l.semTabela || c.semTabela);
+    MT.erro = MT.semTabela ? "" : l.erro || c.erro || "";
+  }
+  const avisoMentora = () => `
+    ${MT.semTabela ? `<p class="alerta" style="margin:0 0 14px">Pra salvar leads e clientes, rode o script <b>10_mentora.sql</b> no Supabase (veja o LEIA-ME).</p>` : ""}
+    ${MT.erro ? `<p class="erro">Não foi possível carregar: ${esc(MT.erro)}</p>` : ""}`;
+
+  async function telaMentora(sub) {
+    if (!["prospeccao", "clientes"].includes(sub)) sub = "prospeccao";
+    MT.sub = sub;
+    conteudo().innerHTML = `
+      <div class="cabecalho">
+        <div>
+          <p class="sobretitulo">Mentoria</p>
+          <h1>Mentora</h1>
+          <p class="muted">Prospecção de clientes e quem já comprou de você.</p>
+        </div>
+        <button class="btn btn-primario" id="mt-novo">${ICON.mais} ${sub === "clientes" ? "Novo cliente" : "Novo lead"}</button>
+      </div>
+      <nav class="abas">
+        <a href="#/mentora/prospeccao" class="${sub === "prospeccao" ? "ativo" : ""}">Prospecção</a>
+        <a href="#/mentora/clientes" class="${sub === "clientes" ? "ativo" : ""}">Clientes</a>
+      </nav>
+      <div id="mt-conteudo"><p class="muted">Carregando...</p></div>`;
+    $("#mt-novo").addEventListener("click", () => abrirLeadM(null, { status: sub === "clientes" ? "cliente" : "abordar" }));
+    await carregarMentora();
+    if (!$("#mt-conteudo") || MT.sub !== sub) return;
+    if (sub === "clientes") desenharClientes(); else desenharProspM();
+  }
+  async function recarregarMentora() {
+    await carregarMentora();
+    if (!$("#mt-conteudo")) return;
+    if (MT.sub === "clientes") desenharClientesArea(); else { desenharDashM(); desenharAreaM(); }
+  }
+
+  // ---------- Prospecção de clientes ----------
+  function desenharProspM() {
+    const alvo = $("#mt-conteudo");
+    alvo.innerHTML = `${avisoMentora()}
+      <div id="mt-dash"></div>
+      <div class="ferramentas" style="margin-top:22px">
+        <div class="alternar" role="group" aria-label="Ver como">
+          <button type="button" data-vista-m="quadro" aria-pressed="${MT.vista === "quadro"}">Quadro</button>
+          <button type="button" data-vista-m="planilha" aria-pressed="${MT.vista === "planilha"}">Planilha</button>
+        </div>
+        <input type="search" id="mt-busca" placeholder="Buscar nome, @, produto, anotação" value="${esc(MT.busca)}" aria-label="Buscar leads">
+        <select id="mt-canal" aria-label="Filtrar por canal"><option value="">Todos os canais</option>
+          ${Object.entries(CANAIS_P).map(([v, t]) => `<option value="${v}" ${MT.canal === v ? "selected" : ""}>${t}</option>`).join("")}</select>
+        <button type="button" class="btn" id="mt-baixar">${ICON.baixar} Baixar planilha</button>
+      </div>
+      <div id="mt-area"></div>`;
+    desenharDashM();
+    desenharAreaM();
+
+    alvo.oninput = (e) => { if (e.target.id === "mt-busca") { MT.busca = e.target.value; desenharAreaM(); } };
+    alvo.onchange = (e) => { if (e.target.id === "mt-canal") { MT.canal = e.target.value; desenharAreaM(); } };
+    alvo.onclick = (e) => {
+      const b = e.target.closest("[data-vista-m],#mt-baixar,[data-copiar-msg-l],[data-mover-l],[data-novo-l],[data-ordem-l],[data-abrir-l],.card-lead");
+      if (!b || e.target.closest("a")) return;
+      if (b.dataset.vistaM) {
+        MT.vista = b.dataset.vistaM;
+        $$("[data-vista-m]").forEach((x) => x.setAttribute("aria-pressed", String(x.dataset.vistaM === MT.vista)));
+        return desenharAreaM();
+      }
+      if (b.id === "mt-baixar") return baixarLeads();
+      if (b.dataset.copiarMsgL) {
+        const l = MT.leads.find((x) => x.id === b.closest(".card-lead").dataset.id);
+        const n = b.dataset.copiarMsgL;
+        return copiarTexto((l && l[`mensagem_${n}`]) || "", `Mensagem ${n} pra ${l ? l.nome : ""} copiada.`);
+      }
+      if (b.dataset.moverL) return moverLeadM(b.closest(".card-lead").dataset.id, b.dataset.moverL);
+      if (b.dataset.novoL) return abrirLeadM(null, { status: b.dataset.novoL });
+      if (b.dataset.ordemL) {
+        const k = b.dataset.ordemL;
+        if (MT.ordem === k) MT.asc = !MT.asc; else { MT.ordem = k; MT.asc = ["nome", "status", "canal", "produto"].includes(k); }
+        return desenharAreaM();
+      }
+      const l = MT.leads.find((x) => x.id === (b.dataset.abrirL || b.dataset.id));
+      if (l) abrirLeadM(l);
+    };
+    alvo.onkeydown = (e) => {
+      const el = e.target.closest(".card-lead, tr[data-abrir-l]");
+      if (el && e.target === el && (e.key === "Enter" || e.key === " ")) {
+        e.preventDefault();
+        const l = MT.leads.find((x) => x.id === (el.dataset.id || el.dataset.abrirL));
+        if (l) abrirLeadM(l);
+      }
+    };
+    ligarArrastar(alvo, MT, ".card-lead", (id) => (MT.leads.find((x) => x.id === id) || {}).ordem || 0, moverLeadM, desenharAreaM);
+  }
+
+  function desenharDashM() {
+    const el = $("#mt-dash");
+    if (!el) return;
+    const ls = MT.leads, h = hoje(), d = new Date();
+    const seg = dataISO(new Date(d.getFullYear(), d.getMonth(), d.getDate() - ((d.getDay() + 6) % 7)));
+    const abordados = ls.filter((l) => l.status !== "abordar" && l.data_contato);
+    const responderam = abordados.filter((l) => l.respondeu_em || RESPONDEU_M.includes(l.status)).length;
+    const clientes = ls.filter((l) => l.status === "cliente");
+    const pct = (n) => (abordados.length ? Math.round((n / abordados.length) * 100) : 0);
+    const receita = MT.compras.filter((c) => clientes.some((l) => l.id === c.lead_id)).reduce((s, c) => s + (Number(c.valor) || 0), 0);
+    const follow = ls.filter((l) => ABERTAS_M.includes(l.status) && l.proximo_followup && l.proximo_followup <= h).length;
+    const cartao = (v, t, sub, cls = "") => `<div class="cartao kpi ${cls}"><span class="rotulo">${t}</span><div class="valor">${v}</div><div class="sub">${sub}</div></div>`;
+    const porDia = [];
+    for (let i = 13; i >= 0; i--) {
+      const dia = dataISO(new Date(d.getFullYear(), d.getMonth(), d.getDate() - i));
+      porDia.push({ date: dia, value: abordados.filter((l) => l.data_contato === dia).length });
+    }
+    const porSemana = [];
+    for (let i = 7; i >= 0; i--) {
+      const ini = new Date(seg + "T12:00:00"); ini.setDate(ini.getDate() - 7 * i);
+      const fim = new Date(ini); fim.setDate(fim.getDate() + 6);
+      const a = dataISO(ini), b = dataISO(fim);
+      porSemana.push({ date: a, value: abordados.filter((l) => l.data_contato >= a && l.data_contato <= b).length });
+    }
+    el.innerHTML = `
+      <div class="grade grade-4">
+        ${cartao(fmtNum(abordados.length), "Leads abordados", "no total")}
+        ${cartao(fmtNum(abordados.filter((l) => l.data_contato === h).length), "Abordados hoje", esc(fmtDataCurta(h)))}
+        ${cartao(fmtNum(abordados.filter((l) => l.data_contato >= seg && l.data_contato <= h).length), "Nesta semana", "de segunda até hoje")}
+        ${cartao(fmtNum(ls.filter((l) => l.status === "abordado").length), "Aguardando resposta", "ainda sem retorno")}
+        ${cartao(pct(responderam) + "%", "Já responderam", `${fmtNum(responderam)} de ${fmtNum(abordados.length)} abordados`)}
+        ${cartao(fmtNum(ls.filter((l) => l.status === "negociacao").length), "Em negociação", "conversando sobre a compra")}
+        ${cartao(fmtNum(clientes.length), "Viraram clientes", `${pct(clientes.length)}% dos abordados${receita ? " · " + esc(fmtReal(receita)) : ""}`)}
+        ${cartao(fmtNum(follow), "Follow-ups pra hoje", follow ? "inclui os atrasados" : "tudo em dia", follow ? "kpi-alerta" : "")}
+      </div>
+      <div class="grade grade-2" style="margin-top:16px">
+        <div class="cartao"><h3>Abordagens por dia</h3><p class="muted" style="font-size:13px">últimos 14 dias</p>${barras(porDia, "leads")}</div>
+        <div class="cartao"><h3>Abordagens por semana</h3><p class="muted" style="font-size:13px">últimas 8 semanas (cada barra começa na segunda)</p>${barras(porSemana, "leads")}</div>
+      </div>`;
+  }
+
+  function filtradosM() {
+    const b = normal(MT.busca).trim();
+    return MT.leads.filter((l) => (!MT.canal || l.canal === MT.canal) &&
+      (!b || [l.nome, l.instagram, l.email, l.telefone, l.produto, l.origem, l.notas].some((v) => normal(v).includes(b))));
+  }
+  function desenharAreaM() {
+    const area = $("#mt-area");
+    if (!area) return;
+    area.innerHTML = MT.vista === "planilha" ? htmlPlanilhaM() : htmlQuadroM();
+  }
+
+  function htmlQuadroM() {
+    const lista = filtradosM();
+    return `<div class="quadro quadro-p">${ETAPAS_M.map((e, i) => {
+      const cards = lista.filter((l) => l.status === e.s).sort((a, b) => (a.ordem || 0) - (b.ordem || 0));
+      return `<section class="coluna" aria-label="${e.t}">
+        <header class="coluna-cab"><h3><i class="ponto etapa-${e.cls}"></i>${e.t}</h3><span class="contagem">${cards.length}</span></header>
+        <div class="coluna-lista" data-status="${e.s}">
+          ${cards.map((l) => htmlCardM(l, i)).join("") || `<p class="coluna-vazia">${i === 0 ? "Pessoas que você quer abordar" : e.s === "cliente" ? "Arraste aqui quem comprou" : "Arraste um lead pra cá"}</p>`}
+        </div>
+        ${i === 0 ? `<button type="button" class="btn btn-fantasma btn-pequeno coluna-add" data-novo-l="abordar">${ICON.mais} Adicionar</button>` : ""}
+      </section>`;
+    }).join("")}</div>`;
+  }
+
+  function htmlCardM(l, i) {
+    const ant = ETAPAS_M[i - 1], prox = ETAPAS_M[i + 1];
+    const fu = l.proximo_followup && ABERTAS_M.includes(l.status) ? corPrazo(l.proximo_followup, false) : "";
+    return `<article class="card-conteudo card-prop card-lead ${classeEtapaM(l.status)}" draggable="true" data-id="${esc(l.id)}" tabindex="0" aria-label="${esc(l.nome)}, abrir">
+      <div class="card-corpo">
+        <h4>${esc(l.nome)}</h4>
+        <div class="prop-linha">${ICON[l.canal] || ICON.outro}<span>${esc(CANAIS_P[l.canal] || l.canal)}${l.instagram ? ` · ${esc(l.instagram)}` : ""}</span></div>
+        ${l.produto ? `<div class="prop-linha">${ICON.mentora}<span>${esc(l.produto)}</span></div>` : ""}
+        <div class="prop-linha muted">${l.data_contato && l.status !== "abordar" ? `Abordado em ${esc(fmtDataCurta(l.data_contato))}` : "Ainda não abordado"}</div>
+        ${fu ? `<span class="prazo cor-${fu}"><i></i>Follow-up ${l.proximo_followup === hoje() ? "hoje" : diaMes(l.proximo_followup)}${fu === "vermelho" ? " (atrasado)" : ""}</span>` : ""}
+        ${l.valor ? `<div class="prop-valor">${esc(fmtReal(l.valor))}</div>` : ""}
+        <div class="card-mover">
+          <span class="card-msgs">
+            ${[1, 2].filter((n) => (l[`mensagem_${n}`] || "").trim()).map((n) => `<button type="button" class="btn-copiar-msg" data-copiar-msg-l="${n}" title="Copiar mensagem ${n}" aria-label="Copiar mensagem ${n} pra ${esc(l.nome)}">${ICON.copiar} Msg ${n}</button>`).join("")}
+          </span>
+          ${ant ? `<button type="button" class="btn-icone" data-mover-l="${ant.s}" aria-label="Mover para ${ant.t}" title="Mover para ${ant.t}">${ICON.voltar}</button>` : ""}
+          ${prox ? `<button type="button" class="btn-icone" data-mover-l="${prox.s}" aria-label="Mover para ${prox.t}" title="Mover para ${prox.t}">${ICON.avancar}</button>` : ""}
+        </div>
+      </div>
+    </article>`;
+  }
+
+  function efeitosM(l, status) {
+    const c = {};
+    const agora = new Date().toISOString();
+    if (status !== "abordar" && !l.data_contato) c.data_contato = hoje();
+    if (RESPONDEU_M.includes(status) && !l.respondeu_em) c.respondeu_em = agora;
+    if (["cliente", "nao_deu"].includes(status)) { if (l.status !== status || !l.fechado_em) c.fechado_em = agora; }
+    else if (l.fechado_em) c.fechado_em = null;
+    return c;
+  }
+
+  // Virou cliente: registra a compra do produto oferecido (se ainda não tem nenhuma)
+  async function registrarPrimeiraCompra(l) {
+    if (comprasDe(l.id).length) return "ja";
+    if (!l.produto) return "sem-produto";
+    const r = await api.salvar("mentora_compras", { lead_id: l.id, produto: l.produto, valor: l.valor ?? null, data_compra: hoje(), status_pagamento: "pago" });
+    if (r.ok) MT.compras.push(r.data);
+    return r.ok ? "ok" : "erro";
+  }
+  function avisoCliente(l, resultado) {
+    if (resultado === "sem-produto") toast(`${l.nome} virou cliente! 🎉 Abra a aba Clientes pra registrar o produto que comprou.`, "ok", 6000);
+    else if (resultado === "erro") toast(`${l.nome} virou cliente, mas não consegui registrar a compra. Registre na aba Clientes.`, "erro", 6000);
+    else toast(`${l.nome} virou cliente! 🎉 Já está na aba Clientes.`, "ok", 5000);
+  }
+
+  async function moverLeadM(id, status, ordem) {
+    const l = MT.leads.find((x) => x.id === id);
+    if (!l) return;
+    if (ordem === undefined) {
+      const na = MT.leads.filter((x) => x.status === status && x.id !== id);
+      ordem = na.length ? Math.max(...na.map((x) => x.ordem || 0)) + 1 : 0;
+    }
+    const campos = { id, status, ordem, ...efeitosM(l, status) };
+    const antes = { ...l };
+    Object.assign(l, campos);
+    desenharDashM(); desenharAreaM();
+    const r = await api.salvar("mentora_leads", campos);
+    if (!r.ok) {
+      Object.assign(l, antes);
+      desenharDashM(); desenharAreaM();
+      return toast("Não foi possível mover: " + (r.erro || ""), "erro", 5000);
+    }
+    if (status === "cliente" && antes.status !== "cliente") {
+      avisoCliente(l, await registrarPrimeiraCompra(l));
+      desenharDashM();
+    }
+  }
+
+  // ---------- Planilha de leads ----------
+  const COLS_M = [
+    { k: "nome", t: "Nome" }, { k: "status", t: "Status" }, { k: "canal", t: "Por onde" }, { k: null, t: "Contato" },
+    { k: "produto", t: "Produto" }, { k: "valor", t: "Valor" }, { k: "data_contato", t: "Abordagem" }, { k: "proximo_followup", t: "Follow-up" },
+  ];
+  function ordenadosM() {
+    const val = (l) => MT.ordem === "nome" ? normal(l.nome) : MT.ordem === "status" ? (ETAPA_M[l.status] || {}).i
+      : MT.ordem === "valor" ? (l.valor == null ? null : Number(l.valor)) : MT.ordem === "produto" ? normal(l.produto) || null : l[MT.ordem];
+    return filtradosM().sort((x, y) => {
+      const a = val(x), b = val(y);
+      if (a == null && b == null) return 0;
+      if (a == null || a === "") return 1;
+      if (b == null || b === "") return -1;
+      const r = a < b ? -1 : a > b ? 1 : 0;
+      return MT.asc ? r : -r;
+    });
+  }
+  function htmlPlanilhaM() {
+    const lista = ordenadosM();
+    if (!lista.length) {
+      return `<div class="cartao vazio" style="padding:36px 12px"><div class="icone-grande">${ICON.mentora}</div>
+        <h2>${MT.busca || MT.canal ? "Nada encontrado" : "Nenhum lead ainda"}</h2>
+        <p>${MT.busca || MT.canal ? "Tente outra busca ou limpe o filtro." : "Clique em \"Novo lead\" pra começar."}</p></div>`;
+    }
+    const cab = COLS_M.map((c) => {
+      if (!c.k) return `<th scope="col">${c.t}</th>`;
+      const ativo = MT.ordem === c.k;
+      return `<th scope="col" ${ativo ? `aria-sort="${MT.asc ? "ascending" : "descending"}"` : ""}><button type="button" class="th-ordem" data-ordem-l="${c.k}">${c.t}${ativo ? (MT.asc ? " ▲" : " ▼") : ""}</button></th>`;
+    }).join("");
+    const linhas = lista.map((l) => {
+      const fu = l.proximo_followup && ABERTAS_M.includes(l.status) ? corPrazo(l.proximo_followup, false) : "neutro";
+      return `<tr data-abrir-l="${esc(l.id)}" tabindex="0" aria-label="Abrir ${esc(l.nome)}">
+        <td><b>${esc(l.nome)}</b>${l.origem ? `<span class="sub">${esc(l.origem)}</span>` : ""}</td>
+        <td><span class="selo-etapa ${classeEtapaM(l.status)}">${esc(nomeEtapaM(l.status))}</span></td>
+        <td>${esc(CANAIS_P[l.canal] || l.canal)}</td>
+        <td>${l.instagram ? `<div>${esc(l.instagram)}</div>` : ""}${l.email ? `<div class="sub">${esc(l.email)}</div>` : ""}${l.telefone ? `<div class="sub">${esc(fmtTel(l.telefone))}</div>` : ""}</td>
+        <td>${esc(l.produto || "")}</td>
+        <td class="num">${esc(fmtReal(l.valor))}</td>
+        <td>${esc(l.status !== "abordar" ? fmtDataCurta(l.data_contato) : "")}</td>
+        <td>${l.proximo_followup ? `<span class="prazo cor-${fu}"><i></i>${esc(fmtDataCurta(l.proximo_followup))}</span>` : ""}</td>
+      </tr>`;
+    }).join("");
+    return `<div class="tabela-rolagem"><table class="tabela tabela-leads tabela-prop"><thead><tr>${cab}</tr></thead><tbody>${linhas}</tbody></table></div>
+      <p class="muted" style="font-size:13px;margin-top:10px">${fmtNum(lista.length)} lead(s). Clique numa linha pra abrir.</p>`;
+  }
+  function baixarLeads() {
+    const lista = ordenadosM();
+    if (!lista.length) return toast("Nenhum lead pra baixar com esses filtros.");
+    baixarCsv(`leads-mentoria-${hoje()}.csv`,
+      ["Nome", "Status", "Por onde", "Instagram", "E-mail", "Telefone", "De onde veio", "Produto oferecido", "Valor", "Data da abordagem", "Próximo follow-up", "Anotações", "Mensagem 1", "Mensagem 2"],
+      lista.map((l) => [l.nome, nomeEtapaM(l.status), CANAIS_P[l.canal] || l.canal, l.instagram, l.email, fmtTel(l.telefone), l.origem, l.produto,
+        valorCsv(l.valor), l.status !== "abordar" ? fmtDataCurta(l.data_contato) : "", fmtDataCurta(l.proximo_followup), l.notas, l.mensagem_1, l.mensagem_2]));
+    toast(`Planilha com ${fmtNum(lista.length)} lead(s) baixada.`, "ok");
+  }
+
+  // ---------- Ficha do lead ----------
+  function abrirLeadM(l, padrao = {}) {
+    const novo = !l;
+    const ed = { status: "abordar", canal: "instagram", ...(l || {}), ...padrao };
+    let sujo = false;
+    const opcoes = (mapa, atual) => Object.entries(mapa).map(([v, t]) => `<option value="${v}" ${atual === v ? "selected" : ""}>${t}</option>`).join("");
+    const compras = novo ? [] : comprasDe(ed.id);
+
+    abrirModal(`
+      <div class="modal-cab"><h2>${novo ? (ed.status === "cliente" ? "Novo cliente" : "Novo lead") : esc(ed.nome)}</h2><button class="btn-icone" data-fechar aria-label="Fechar">${ICON.x}</button></div>
+      <div class="grade grade-2">
+        <label class="campo"><span class="rotulo">Nome</span><input type="text" id="ml-nome" value="${esc(ed.nome || "")}" placeholder="Nome da pessoa" maxlength="100"></label>
+        <label class="campo"><span class="rotulo">Instagram</span><input type="text" id="ml-instagram" value="${esc(ed.instagram || "")}" placeholder="@pessoa"></label>
+        <label class="campo"><span class="rotulo">E-mail</span><input type="email" id="ml-email" value="${esc(ed.email || "")}"></label>
+        <label class="campo"><span class="rotulo">Telefone / WhatsApp</span><input type="text" id="ml-telefone" value="${esc(ed.telefone || "")}" placeholder="(47) 99999-0000"></label>
+      </div>
+      <div class="contato-rapido" id="ml-contato"></div>
+      <div class="grade grade-3">
+        <label class="campo"><span class="rotulo">De onde veio</span><input type="text" id="ml-origem" list="ml-origens" value="${esc(ed.origem || "")}" placeholder="Ex: Indicação">
+          <datalist id="ml-origens">${ORIGENS_M.map((o) => `<option value="${esc(o)}">`).join("")}</datalist></label>
+        <label class="campo"><span class="rotulo">Por onde abordou</span><select id="ml-canal">${opcoes(CANAIS_P, ed.canal)}</select></label>
+        <label class="campo"><span class="rotulo">Como está</span><select id="ml-status">${opcoes(Object.fromEntries(ETAPAS_M.map((e) => [e.s, e.t])), ed.status)}</select></label>
+      </div>
+      <div class="grade grade-2">
+        <label class="campo"><span class="rotulo">Data da abordagem</span><input type="date" id="ml-contato-data" value="${esc(ed.data_contato || (novo && ed.status !== "abordar" ? hoje() : ""))}"></label>
+        <div class="campo"><label class="rotulo" for="ml-follow">Próximo follow-up</label><input type="date" id="ml-follow" value="${esc(ed.proximo_followup || "")}">
+          <div class="linha-btns" style="margin-top:6px">
+            <button type="button" class="btn btn-fantasma btn-pequeno" data-follow="3">+3 dias</button>
+            <button type="button" class="btn btn-fantasma btn-pequeno" data-follow="7">+7 dias</button>
+            <button type="button" class="btn btn-fantasma btn-pequeno" data-follow="0">Limpar</button>
+          </div></div>
+      </div>
+
+      <h3 class="sub-titulo">Produto</h3>
+      <div class="grade grade-2">
+        <label class="campo"><span class="rotulo">Produto oferecido</span><input type="text" id="ml-produto" list="ml-produtos" value="${esc(ed.produto || "")}" placeholder="Ex: Mentoria individual">
+          <datalist id="ml-produtos">${produtosConhecidos().map((p) => `<option value="${esc(p)}">`).join("")}</datalist></label>
+        <label class="campo"><span class="rotulo">Valor do produto</span><input type="text" id="ml-valor" inputmode="decimal" value="${ed.valor != null ? esc(String(ed.valor).replace(".", ",")) : ""}" placeholder="Ex: R$ 1.497"></label>
+      </div>
+      ${compras.length ? `<p class="ajuda" style="margin:-6px 0 12px">Já comprou: ${compras.map((c) => `${esc(c.produto)}${c.valor ? ` (${esc(fmtReal(c.valor))})` : ""}`).join(", ")}. Veja e edite na aba Clientes.</p>` : ""}
+
+      <h3 class="sub-titulo">Mensagens de abordagem</h3>
+      ${[1, 2].map((n) => `<div class="campo msg-campo">
+        <div class="linha-topo"><label for="ml-msg${n}" class="rotulo">${n === 1 ? "Mensagem 1" : "Mensagem 2 (opcional, outra abordagem)"}</label><span class="contador" id="ml-msg${n}-cont"></span></div>
+        <textarea id="ml-msg${n}" rows="${n === 1 ? 5 : 4}" placeholder="${n === 1 ? "A mensagem que você vai enviar..." : "Uma segunda versão, se quiser testar outra abordagem..."}">${esc(ed[`mensagem_${n}`] || "")}</textarea>
+        <button type="button" class="btn btn-pequeno msg-copiar" data-copiar-msg="${n}">${ICON.copiar} Copiar mensagem ${n}</button>
+      </div>`).join("")}
+
+      <label class="campo" style="margin-top:6px"><span class="rotulo">Anotações</span>
+        <textarea id="ml-notas" rows="3" placeholder="O que a pessoa disse, objeções, momento de vida...">${esc(ed.notas || "")}</textarea></label>
+
+      <div class="modal-rodape" style="justify-content:space-between">
+        ${novo ? "<span></span>" : `<button type="button" class="btn btn-perigo" data-excluir>${ICON.lixo} Excluir</button>`}
+        <span style="display:flex;gap:8px"><button type="button" class="btn" data-fechar>Cancelar</button><button type="button" class="btn btn-primario" data-salvar>Salvar</button></span>
+      </div>`, aoClicar, "largo", () => !sujo || confirm("Você tem alterações não salvas. Fechar mesmo assim?"));
+
+    const v = (id) => $("#" + id).value.trim();
+    const atualizarContato = () => {
+      const html = botoesContato({ email: v("ml-email"), telefone: v("ml-telefone"), instagram: v("ml-instagram") });
+      $("#ml-contato").innerHTML = html ? `<span class="rotulo" style="margin:0">Falar com a pessoa</span>${html}` : "";
+    };
+    const contarMsg = (n) => { const t = $("#ml-msg" + n).value; $(`#ml-msg${n}-cont`).textContent = t ? `${t.length} caracteres` : ""; };
+    atualizarContato(); contarMsg(1); contarMsg(2);
+    if (novo) setTimeout(() => { const t = $("#ml-nome"); if (t) t.focus(); }, 50);
+
+    const md = $("#modal");
+    md.oninput = (e) => {
+      sujo = true;
+      if (/^ml-(email|telefone|instagram)$/.test(e.target.id)) atualizarContato();
+      if (e.target.id === "ml-msg1") contarMsg(1);
+      if (e.target.id === "ml-msg2") contarMsg(2);
+    };
+    md.onchange = (e) => {
+      sujo = true;
+      if (e.target.id === "ml-status" && e.target.value !== "abordar" && !$("#ml-contato-data").value) $("#ml-contato-data").value = hoje();
+    };
+
+    async function aoClicar(e) {
+      const cm = e.target.closest("[data-copiar-msg]");
+      if (cm) {
+        const n = cm.dataset.copiarMsg;
+        const texto = $("#ml-msg" + n).value;
+        if (!texto.trim()) { toast(`Escreva a mensagem ${n} primeiro.`, "erro"); $("#ml-msg" + n).focus(); return; }
+        return copiarTexto(texto, `Mensagem ${n} copiada.`);
+      }
+      const fb = e.target.closest("[data-follow]");
+      if (fb) {
+        const n = Number(fb.dataset.follow);
+        const d = new Date(); d.setDate(d.getDate() + n);
+        $("#ml-follow").value = n ? dataISO(d) : "";
+        sujo = true;
+        return;
+      }
+      if (e.target.closest("[data-excluir]")) {
+        const nc = compras.length;
+        if (!confirm(`Excluir ${ed.nome}?${nc ? ` As ${nc} compra(s) dessa pessoa também são apagadas.` : ""} Não dá pra desfazer.`)) return;
+        await api.apagar("mentora_compras", compras.map((c) => c.id)); // no banco já é automático; no teste local precisa
+        if (!(await api.apagar("mentora_leads", [ed.id]))) return toast("Não foi possível excluir. Tente de novo.", "erro");
+        sujo = false; fecharModal(); toast("Excluído.");
+        return recarregarMentora();
+      }
+      const btn = e.target.closest("[data-salvar]");
+      if (!btn) return;
+      const nome = v("ml-nome");
+      if (!nome) { toast("Escreva o nome.", "erro"); $("#ml-nome").focus(); return; }
+      const email = v("ml-email");
+      if (email && !/^\S+@\S+\.\S+$/.test(email)) { toast("Esse e-mail parece incompleto.", "erro"); $("#ml-email").focus(); return; }
+      const valorTxt = v("ml-valor");
+      const valor = lerValor(valorTxt);
+      if (valorTxt && valor == null) { toast("Não entendi o valor. Use só números, ex: 1497 ou 1.497,00", "erro"); return; }
+
+      const status = $("#ml-status").value;
+      const base = { ...ed, data_contato: $("#ml-contato-data").value || null };
+      const campos = {
+        nome, instagram: v("ml-instagram") || null, email: email || null, telefone: v("ml-telefone") || null,
+        origem: v("ml-origem") || null, canal: $("#ml-canal").value, status,
+        data_contato: $("#ml-contato-data").value || null, proximo_followup: $("#ml-follow").value || null,
+        produto: v("ml-produto") || null, valor,
+        mensagem_1: $("#ml-msg1").value, mensagem_2: $("#ml-msg2").value, notas: $("#ml-notas").value,
+        ...efeitosM(base, status),
+      };
+      if (novo || status !== ed.status) {
+        const na = MT.leads.filter((x) => x.status === status && x.id !== ed.id);
+        campos.ordem = na.length ? Math.max(...na.map((x) => x.ordem || 0)) + 1 : 0;
+      }
+      if (!novo) campos.id = ed.id;
+      btn.disabled = true; btn.textContent = "Salvando...";
+      const r = await api.salvar("mentora_leads", campos);
+      if (!r.ok) { btn.disabled = false; btn.textContent = "Salvar"; return toast("Não foi possível salvar: " + (r.erro || ""), "erro", 5000); }
+      sujo = false;
+      fecharModal();
+      if (status === "cliente" && ed.status !== "cliente" || (novo && status === "cliente")) avisoCliente(r.data, await registrarPrimeiraCompra(r.data));
+      else toast(r.local ? "Salvo neste navegador (modo de teste)." : "Salvo.", "ok");
+      recarregarMentora();
+    }
+  }
+
+  // ---------- Clientes ----------
+  function linhasClientes() {
+    const b = normal(MT.buscaC).trim();
+    return MT.leads.filter((l) => l.status === "cliente").map((l) => {
+      const cs = comprasDe(l.id);
+      return {
+        l, cs,
+        total: cs.reduce((s, c) => s + (Number(c.valor) || 0), 0),
+        primeira: cs.length ? cs[0].data_compra : null,
+        ultima: cs.length ? cs[cs.length - 1].data_compra : null,
+        pendentes: cs.filter((c) => c.status_pagamento !== "pago").length,
+        produtos: Array.from(new Set(cs.map((c) => c.produto))),
+      };
+    }).filter((x) => !b || [x.l.nome, x.l.instagram, x.l.email, x.l.telefone, ...x.produtos].some((v) => normal(v).includes(b)));
+  }
+
+  function desenharClientes() {
+    const alvo = $("#mt-conteudo");
+    alvo.innerHTML = `${avisoMentora()}
+      <div id="cl-dash"></div>
+      <div class="ferramentas" style="margin-top:22px">
+        <input type="search" id="cl-busca" placeholder="Buscar cliente, @, produto" value="${esc(MT.buscaC)}" aria-label="Buscar clientes">
+        <button type="button" class="btn" id="cl-baixar">${ICON.baixar} Baixar planilha</button>
+      </div>
+      <div id="cl-area"></div>`;
+    desenharClientesArea();
+    alvo.oninput = (e) => { if (e.target.id === "cl-busca") { MT.buscaC = e.target.value; desenharClientesArea(); } };
+    alvo.onchange = null;
+    alvo.onclick = (e) => {
+      const b = e.target.closest("#cl-baixar,[data-ordem-c],[data-abrir-c]");
+      if (!b || e.target.closest("a")) return;
+      if (b.id === "cl-baixar") return baixarClientes();
+      if (b.dataset.ordemC) {
+        const k = b.dataset.ordemC;
+        if (MT.ordemC === k) MT.ascC = !MT.ascC; else { MT.ordemC = k; MT.ascC = k === "nome"; }
+        return desenharClientesArea();
+      }
+      const l = MT.leads.find((x) => x.id === b.dataset.abrirC);
+      if (l) abrirClienteM(l);
+    };
+    alvo.onkeydown = (e) => {
+      const tr = e.target.closest("tr[data-abrir-c]");
+      if (tr && e.target === tr && (e.key === "Enter" || e.key === " ")) {
+        e.preventDefault();
+        const l = MT.leads.find((x) => x.id === tr.dataset.abrirC);
+        if (l) abrirClienteM(l);
+      }
+    };
+    alvo.ondragstart = null; alvo.ondragover = null; alvo.ondrop = null; alvo.ondragend = null;
+  }
+
+  function desenharClientesArea() {
+    const dash = $("#cl-dash"), area = $("#cl-area");
+    if (!dash || !area) return;
+    const todos = MT.leads.filter((l) => l.status === "cliente");
+    const ids = new Set(todos.map((l) => l.id));
+    const compras = MT.compras.filter((c) => ids.has(c.lead_id));
+    const receita = compras.reduce((s, c) => s + (Number(c.valor) || 0), 0);
+    const comCompra = new Set(compras.map((c) => c.lead_id)).size;
+    const mes = hoje().slice(0, 7);
+    const doMes = compras.filter((c) => String(c.data_compra).startsWith(mes)).reduce((s, c) => s + (Number(c.valor) || 0), 0);
+    const pend = compras.filter((c) => c.status_pagamento !== "pago");
+    const cartao = (v, t, sub, cls = "") => `<div class="cartao kpi ${cls}"><span class="rotulo">${t}</span><div class="valor">${v}</div><div class="sub">${sub}</div></div>`;
+    dash.innerHTML = `<div class="grade grade-5">
+      ${cartao(fmtNum(todos.length), "Clientes", "pessoas que compraram")}
+      ${cartao(esc(fmtReal(receita) || "R$ 0,00"), "Receita total", `${fmtNum(compras.length)} compra(s)`)}
+      ${cartao(esc(fmtReal(comCompra ? receita / comCompra : 0)), "Ticket médio", "por cliente")}
+      ${cartao(esc(fmtReal(doMes) || "R$ 0,00"), "Receita do mês", esc(new Date().toLocaleDateString("pt-BR", { month: "long" })))}
+      ${cartao(fmtNum(pend.length), "Pagamentos pendentes", pend.length ? esc(fmtReal(pend.reduce((s, c) => s + (Number(c.valor) || 0), 0))) + " a receber" : "tudo recebido", pend.length ? "kpi-alerta" : "")}
+    </div>`;
+
+    const lista = linhasClientes();
+    const val = (x) => ({ nome: normal(x.l.nome), total: x.total, primeira: x.primeira, ultima: x.ultima }[MT.ordemC]);
+    lista.sort((x, y) => {
+      const a = val(x), b = val(y);
+      if (a == null && b == null) return 0;
+      if (a == null) return 1;
+      if (b == null) return -1;
+      const r = a < b ? -1 : a > b ? 1 : 0;
+      return MT.ascC ? r : -r;
+    });
+    if (!lista.length) {
+      area.innerHTML = `<div class="cartao vazio"><div class="icone-grande">${ICON.mentora}</div>
+        <h2>${MT.buscaC ? "Nenhum cliente encontrado" : "Nenhum cliente ainda"}</h2>
+        <p>${MT.buscaC ? "Tente outra busca." : "Quando um lead for pra \"Virou cliente\" na Prospecção, ele aparece aqui com o produto que comprou."}</p></div>`;
+      return;
+    }
+    const th = (k, t) => {
+      const ativo = MT.ordemC === k;
+      return `<th scope="col" ${ativo ? `aria-sort="${MT.ascC ? "ascending" : "descending"}"` : ""}><button type="button" class="th-ordem" data-ordem-c="${k}">${t}${ativo ? (MT.ascC ? " ▲" : " ▼") : ""}</button></th>`;
+    };
+    area.innerHTML = `<div class="tabela-rolagem"><table class="tabela tabela-leads tabela-prop">
+      <thead><tr>${th("nome", "Cliente")}<th scope="col">Contato</th><th scope="col">Produtos adquiridos</th>${th("total", "Total gasto")}${th("primeira", "Primeira compra")}${th("ultima", "Última compra")}<th scope="col">Pagamento</th></tr></thead>
+      <tbody>${lista.map((x) => `<tr data-abrir-c="${esc(x.l.id)}" tabindex="0" aria-label="Abrir ${esc(x.l.nome)}">
+        <td><b>${esc(x.l.nome)}</b>${x.l.instagram ? `<span class="sub">${esc(x.l.instagram)}</span>` : ""}</td>
+        <td>${x.l.email ? `<div>${esc(x.l.email)}</div>` : ""}${x.l.telefone ? `<div class="sub">${esc(fmtTel(x.l.telefone))}</div>` : ""}</td>
+        <td>${x.produtos.length ? `<div class="chips">${x.produtos.map((p) => `<span class="chip">${esc(p)}</span>`).join("")}</div>` : `<span class="muted">sem compra registrada</span>`}</td>
+        <td class="num"><b>${esc(fmtReal(x.total))}</b></td>
+        <td>${esc(fmtDataCurta(x.primeira))}</td>
+        <td>${esc(fmtDataCurta(x.ultima))}</td>
+        <td>${!x.cs.length ? "" : x.pendentes ? `<span class="selo-etapa etapa-enviada">${x.pendentes} pendente${x.pendentes > 1 ? "s" : ""}</span>` : `<span class="selo-etapa etapa-aprovado">Em dia</span>`}</td>
+      </tr>`).join("")}</tbody></table></div>
+      <p class="muted" style="font-size:13px;margin-top:10px">${fmtNum(lista.length)} cliente(s). Clique numa linha pra ver e editar as compras.</p>`;
+  }
+
+  // Planilha de clientes: uma linha por compra (bom pro controle financeiro)
+  function baixarClientes() {
+    const lista = linhasClientes();
+    if (!lista.length) return toast("Nenhum cliente pra baixar.");
+    const linhas = [];
+    lista.forEach((x) => {
+      const base = [x.l.nome, x.l.instagram, x.l.email, fmtTel(x.l.telefone), x.l.origem];
+      if (!x.cs.length) linhas.push([...base, "", "", "", "", "", ""]);
+      x.cs.forEach((c) => linhas.push([...base, c.produto, valorCsv(c.valor), fmtDataCurta(c.data_compra), c.pagamento, PAGAMENTO[c.status_pagamento] || c.status_pagamento, c.notas]));
+    });
+    baixarCsv(`clientes-mentoria-${hoje()}.csv`,
+      ["Cliente", "Instagram", "E-mail", "Telefone", "De onde veio", "Produto", "Valor", "Data da compra", "Forma de pagamento", "Situação do pagamento", "Observações"], linhas);
+    toast(`Planilha com ${fmtNum(lista.length)} cliente(s) baixada.`, "ok");
+  }
+
+  // Ficha do cliente: dados e compras (adicionar, editar, remover)
+  function abrirClienteM(l) {
+    const compras = comprasDe(l.id).map((c) => ({ ...c, valorTxt: c.valor != null ? String(c.valor).replace(".", ",") : "" }));
+    const removidas = [];
+    let sujo = false;
+    const linhaCompra = (c, i) => `<div class="compra-linha" data-i="${i}">
+      <label class="campo"><span class="rotulo">Produto</span><input type="text" data-cp="produto" value="${esc(c.produto || "")}" list="cl-produtos" placeholder="Ex: Mentoria individual"></label>
+      <label class="campo"><span class="rotulo">Valor</span><input type="text" data-cp="valorTxt" inputmode="decimal" value="${esc(c.valorTxt || "")}" placeholder="R$"></label>
+      <label class="campo"><span class="rotulo">Data</span><input type="date" data-cp="data_compra" value="${esc(c.data_compra || hoje())}"></label>
+      <label class="campo"><span class="rotulo">Forma de pagamento</span><input type="text" data-cp="pagamento" value="${esc(c.pagamento || "")}" placeholder="Pix, cartão 3x..."></label>
+      <label class="campo"><span class="rotulo">Situação</span><select data-cp="status_pagamento">${Object.entries(PAGAMENTO).map(([v, t]) => `<option value="${v}" ${(c.status_pagamento || "pago") === v ? "selected" : ""}>${t}</option>`).join("")}</select></label>
+      <button type="button" class="btn-icone" data-del-compra="${i}" aria-label="Remover compra" title="Remover compra">${ICON.lixo}</button>
+    </div>`;
+    const comprasHtml = () => compras.length ? compras.map(linhaCompra).join("") : `<p class="muted" style="font-size:13px">Nenhuma compra registrada ainda.</p>`;
+    const totalHtml = () => {
+      const t = compras.reduce((s, c) => s + (lerValor(c.valorTxt) || 0), 0);
+      return `Total: <b>${esc(fmtReal(t) || "R$ 0,00")}</b>`;
+    };
+
+    abrirModal(`
+      <div class="modal-cab"><h2>${esc(l.nome)}</h2><button class="btn-icone" data-fechar aria-label="Fechar">${ICON.x}</button></div>
+      <div class="info-grade">
+        <div><span class="rotulo">Instagram</span><div>${esc(l.instagram || "") || `<span class="muted">sem informação</span>`}</div></div>
+        <div><span class="rotulo">E-mail</span><div>${esc(l.email || "") || `<span class="muted">sem informação</span>`}</div></div>
+        <div><span class="rotulo">Telefone</span><div>${esc(fmtTel(l.telefone)) || `<span class="muted">sem informação</span>`}</div></div>
+        <div><span class="rotulo">De onde veio</span><div>${esc(l.origem || "") || `<span class="muted">sem informação</span>`}</div></div>
+      </div>
+      <div class="contato-rapido">${botoesContato(l)}<button type="button" class="btn btn-pequeno btn-fantasma" data-editar-dados>${ICON.editar} Editar dados</button></div>
+      ${l.notas ? `<p class="ajuda" style="margin:-6px 0 12px"><b>Anotações:</b> ${esc(l.notas)}</p>` : ""}
+
+      <div class="linha-topo"><h3 class="sub-titulo" style="flex:1">Compras</h3><span class="muted" id="cl-total" style="font-size:14px">${totalHtml()}</span></div>
+      <datalist id="cl-produtos">${produtosConhecidos().map((p) => `<option value="${esc(p)}">`).join("")}</datalist>
+      <div id="cl-compras">${comprasHtml()}</div>
+      <button type="button" class="btn btn-pequeno" data-add-compra>${ICON.mais} Adicionar compra</button>
+
+      <div class="modal-rodape">
+        <button type="button" class="btn" data-fechar>Cancelar</button>
+        <button type="button" class="btn btn-primario" data-salvar>Salvar</button>
+      </div>`, aoClicar, "largo", () => !sujo || confirm("Você tem alterações não salvas. Fechar mesmo assim?"));
+
+    const md = $("#modal");
+    md.oninput = md.onchange = (e) => {
+      const t = e.target;
+      const linha = t.closest(".compra-linha");
+      if (!linha || !t.dataset.cp) return;
+      sujo = true;
+      compras[+linha.dataset.i][t.dataset.cp] = t.value;
+      if (t.dataset.cp === "valorTxt") $("#cl-total").innerHTML = totalHtml();
+    };
+
+    async function aoClicar(e) {
+      const b = e.target.closest("button");
+      if (!b) return;
+      if (b.dataset.editarDados !== undefined) {
+        if (sujo && !confirm("Você tem alterações não salvas nas compras. Continuar mesmo assim?")) return;
+        return abrirLeadM(l);
+      }
+      if (b.dataset.addCompra !== undefined) {
+        compras.push({ produto: l.produto || "", valorTxt: l.valor != null && !compras.length ? String(l.valor).replace(".", ",") : "", data_compra: hoje(), status_pagamento: "pago" });
+        sujo = true;
+        $("#cl-compras").innerHTML = comprasHtml();
+        $("#cl-total").innerHTML = totalHtml();
+        const ult = $(`.compra-linha[data-i="${compras.length - 1}"] input`);
+        if (ult) ult.focus();
+        return;
+      }
+      if (b.dataset.delCompra !== undefined) {
+        const [c] = compras.splice(+b.dataset.delCompra, 1);
+        if (c.id) removidas.push(c.id);
+        sujo = true;
+        $("#cl-compras").innerHTML = comprasHtml();
+        $("#cl-total").innerHTML = totalHtml();
+        return;
+      }
+      if (b.dataset.salvar === undefined) return;
+      for (const [i, c] of compras.entries()) {
+        if (!String(c.produto || "").trim()) { toast(`A compra ${i + 1} está sem produto.`, "erro"); return; }
+        if (String(c.valorTxt || "").trim() && lerValor(c.valorTxt) == null) { toast(`Não entendi o valor da compra ${i + 1}.`, "erro"); return; }
+        if (!c.data_compra) { toast(`A compra ${i + 1} está sem data.`, "erro"); return; }
+      }
+      b.disabled = true; b.textContent = "Salvando...";
+      for (const c of compras) {
+        const campos = {
+          ...(c.id ? { id: c.id } : { lead_id: l.id }),
+          produto: c.produto.trim(), valor: lerValor(c.valorTxt), data_compra: c.data_compra,
+          pagamento: (c.pagamento || "").trim() || null, status_pagamento: c.status_pagamento || "pago",
+        };
+        const r = await api.salvar("mentora_compras", campos);
+        if (!r.ok) { b.disabled = false; b.textContent = "Salvar"; return toast("Não foi possível salvar uma compra: " + (r.erro || ""), "erro", 5000); }
+        if (!c.id) c.id = r.data.id;
+      }
+      if (removidas.length && !(await api.apagar("mentora_compras", removidas))) {
+        b.disabled = false; b.textContent = "Salvar";
+        return toast("Não foi possível remover uma compra. Tente de novo.", "erro");
+      }
+      sujo = false;
+      fecharModal();
+      toast("Compras salvas.", "ok");
+      recarregarMentora();
     }
   }
 
