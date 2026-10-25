@@ -2036,8 +2036,13 @@
     alvo.oninput = (e) => { if (e.target.id === "ugc-busca") { UGC.busca = e.target.value; desenharUgcArea(); } };
     alvo.onchange = (e) => { if (e.target.id === "ugc-canal") { UGC.canal = e.target.value; desenharUgcArea(); } };
     alvo.onclick = (e) => {
-      const b = e.target.closest("[data-vista],#ugc-baixar,[data-mover-p],[data-nova-p],[data-ordem-p],[data-abrir-p],.card-prop");
+      const b = e.target.closest("[data-vista],#ugc-baixar,[data-copiar-msg-p],[data-mover-p],[data-nova-p],[data-ordem-p],[data-abrir-p],.card-prop");
       if (!b || e.target.closest("a")) return;
+      if (b.dataset.copiarMsgP) {
+        const p = UGC.propostas.find((x) => x.id === b.closest(".card-prop").dataset.id);
+        const n = b.dataset.copiarMsgP;
+        return copiarTexto((p && p[`mensagem_${n}`]) || "", `Mensagem ${n} de ${nomeMarca(p)} copiada.`);
+      }
       if (b.dataset.vista) {
         UGC.vista = b.dataset.vista;
         $$("[data-vista]").forEach((x) => x.setAttribute("aria-pressed", String(x.dataset.vista === UGC.vista)));
@@ -2193,6 +2198,9 @@
         ${fu ? `<span class="prazo cor-${fu}"><i></i>Follow-up ${p.proximo_followup === hoje() ? "hoje" : diaMes(p.proximo_followup)}${fu === "vermelho" ? " (atrasado)" : ""}</span>` : ""}
         ${p.valor ? `<div class="prop-valor">${esc(fmtReal(p.valor))}</div>` : ""}
         <div class="card-mover">
+          <span class="card-msgs">
+            ${[1, 2].filter((n) => (p[`mensagem_${n}`] || "").trim()).map((n) => `<button type="button" class="btn-copiar-msg" data-copiar-msg-p="${n}" title="Copiar mensagem ${n}" aria-label="Copiar mensagem ${n} de ${esc(nomeMarca(p))}">${ICON.copiar} Msg ${n}</button>`).join("")}
+          </span>
           ${ant ? `<button type="button" class="btn-icone" data-mover-p="${ant.s}" aria-label="Mover para ${ant.t}" title="Mover para ${ant.t}">${ICON.voltar}</button>` : ""}
           ${prox ? `<button type="button" class="btn-icone" data-mover-p="${prox.s}" aria-label="Mover para ${prox.t}" title="Mover para ${prox.t}">${ICON.avancar}</button>` : ""}
         </div>
@@ -2287,12 +2295,12 @@
       if (/^[=+\-@\t\r]/.test(s)) s = "'" + s; // protege contra fórmulas
       return /[;"\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
     };
-    const cab = ["Marca", "Status", "Por onde", "Responsável", "E-mail", "Telefone", "Instagram", "Data de envio", "Próximo follow-up", "Valor", "O que foi proposto", "Anotações"];
+    const cab = ["Marca", "Status", "Por onde", "Responsável", "E-mail", "Telefone", "Instagram", "Data de envio", "Próximo follow-up", "Valor", "O que foi proposto", "Anotações", "Mensagem 1", "Mensagem 2"];
     const linhas = lista.map((p) => {
       const m = marcaDe(p) || {};
       return [nomeMarca(p), (ETAPA_P[p.status] || {}).t || p.status, CANAIS_P[p.canal] || p.canal, m.responsavel, m.email, fmtTel(m.telefone), m.instagram,
         p.status !== "enviar" ? fmtDataCurta(p.data_envio) : "", fmtDataCurta(p.proximo_followup),
-        p.valor != null ? String(p.valor).replace(".", ",") : "", p.proposta, p.notas].map(cel).join(";");
+        p.valor != null ? String(p.valor).replace(".", ",") : "", p.proposta, p.notas, p.mensagem_1, p.mensagem_2].map(cel).join(";");
     });
     const url = URL.createObjectURL(new Blob(["﻿" + [cab.join(";"), ...linhas].join("\r\n")], { type: "text/csv;charset=utf-8" }));
     const a = document.createElement("a");
@@ -2329,6 +2337,13 @@
           </div></div>
       </div>
 
+      <h3 class="sub-titulo">Mensagens de abordagem</h3>
+      ${[1, 2].map((n) => `<div class="campo msg-campo">
+        <div class="linha-topo"><label for="pp-msg${n}" class="rotulo">${n === 1 ? "Mensagem 1" : "Mensagem 2 (opcional, outra abordagem)"}</label><span class="contador" id="pp-msg${n}-cont"></span></div>
+        <textarea id="pp-msg${n}" rows="${n === 1 ? 6 : 4}" placeholder="${n === 1 ? "Escreva aqui a mensagem que você vai enviar pra marca..." : "Uma segunda versão, se quiser testar outra abordagem..."}">${esc(ed[`mensagem_${n}`] || "")}</textarea>
+        <button type="button" class="btn btn-pequeno msg-copiar" data-copiar-msg="${n}">${ICON.copiar} Copiar mensagem ${n}</button>
+      </div>`).join("")}
+
       <h3 class="sub-titulo">Dados da marca</h3>
       <div class="grade grade-2">
         <label class="campo"><span class="rotulo">Responsável</span><input type="text" id="pp-responsavel" value="${esc((m0 && m0.responsavel) || "")}" placeholder="Nome de quem cuida"></label>
@@ -2357,11 +2372,19 @@
       $("#pp-contato").innerHTML = html ? `<span class="rotulo" style="margin:0">Falar com a marca</span>${html}` : "";
     };
     atualizarContato();
+    // contador de caracteres das mensagens
+    const contarMsg = (n) => {
+      const t = $("#pp-msg" + n).value;
+      $(`#pp-msg${n}-cont`).textContent = t ? `${t.length} caracteres` : "";
+    };
+    contarMsg(1); contarMsg(2);
     if (nova) setTimeout(() => { const t = $("#pp-marca"); if (t && !t.value) t.focus(); }, 50);
 
     const m = $("#modal");
     m.oninput = (e) => {
       sujo = true;
+      if (e.target.id === "pp-msg1") contarMsg(1);
+      if (e.target.id === "pp-msg2") contarMsg(2);
       if (e.target.id === "pp-marca") {
         // escolheu uma marca já cadastrada: completa os dados que estão vazios
         const achada = acharMarcaPorNome(e.target.value);
@@ -2375,6 +2398,13 @@
     };
 
     async function aoClicar(e) {
+      const cm = e.target.closest("[data-copiar-msg]");
+      if (cm) {
+        const n = cm.dataset.copiarMsg;
+        const texto = $("#pp-msg" + n).value;
+        if (!texto.trim()) { toast(`Escreva a mensagem ${n} primeiro.`, "erro"); $("#pp-msg" + n).focus(); return; }
+        return copiarTexto(texto, `Mensagem ${n} copiada.`);
+      }
       const fb = e.target.closest("[data-follow]");
       if (fb) {
         const n = Number(fb.dataset.follow);
@@ -2424,6 +2454,7 @@
         marca_id: marca.id, marca_nome: marca.nome, status, canal: $("#pp-canal").value,
         data_envio: $("#pp-envio").value || null, proximo_followup: $("#pp-follow").value || null,
         valor, proposta: $("#pp-proposta").value, notas: $("#pp-notas").value,
+        mensagem_1: $("#pp-msg1").value, mensagem_2: $("#pp-msg2").value,
         ...efeitosStatus(base, status),
       };
       if (nova || status !== ed.status) {

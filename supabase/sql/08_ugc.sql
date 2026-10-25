@@ -49,6 +49,10 @@ create table if not exists public.ugc_propostas (
   created_at        timestamptz not null default now(),
   updated_at        timestamptz not null default now()
 );
+-- Mensagens de abordagem (também no 09_ugc_mensagens.sql, pra quem já tinha rodado este)
+alter table public.ugc_propostas add column if not exists mensagem_1 text;
+alter table public.ugc_propostas add column if not exists mensagem_2 text;
+
 create index if not exists ugc_propostas_status on public.ugc_propostas (status, ordem);
 create index if not exists ugc_propostas_envio on public.ugc_propostas (data_envio);
 create index if not exists ugc_propostas_marca on public.ugc_propostas (marca_id);
