@@ -58,6 +58,11 @@
     editar: svg('<path d="M4 20h4L19 9l-4-4L4 16z"/>'),
     voltar: svg('<path d="M15 18l-6-6 6-6"/>'),
     avancar: svg('<path d="M9 18l6-6-6-6"/>'),
+    // tipos de conteúdo
+    video: svg('<rect x="2.5" y="5" width="14" height="14" rx="2.5"/><path d="M16.5 10l5-3v10l-5-3"/>'),
+    foto: svg('<rect x="3" y="4" width="18" height="16" rx="2.5"/><circle cx="9" cy="10" r="2"/><path d="M21 16l-5-5-9 9"/>'),
+    carrossel: svg('<rect x="7.5" y="3.5" width="13" height="13" rx="2"/><path d="M4 8v10.5A1.5 1.5 0 0 0 5.5 20H16"/>'),
+    story: svg('<circle cx="12" cy="12" r="9" stroke-dasharray="3.2 2.4"/><circle cx="12" cy="12" r="4.2"/>'),
     x: svg('<path d="M6 6l12 12M18 6 6 18"/>'),
     arquivo: svg('<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/>'),
     grafico: svg('<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>'),
@@ -623,7 +628,7 @@
       <li><a href="#/calendario/mes" class="cor-${p.cor}">
         <span class="quando">${esc(quando(p.data))}</span>
         <span class="prazo cor-${p.cor}"><i></i>${p.t}</span>
-        <span class="oque">${esc(c.titulo)}${c.categoria === "publi" && c.marca ? ` <span class="sub">· ${esc(c.marca)}</span>` : ""}</span>
+        <span class="oque">${esc(c.titulo)}${COM_MARCA.includes(c.categoria) && c.marca ? ` <span class="sub">· ${esc(c.marca)}</span>` : ""}</span>
       </a></li>`).join("")}</ul>
       ${itens.length > 8 ? `<p class="muted" style="margin:10px 0 0;font-size:13px">E mais ${itens.length - 8}. <a href="#/calendario/mes">Ver tudo</a></p>` : ""}`;
   }
@@ -643,6 +648,10 @@
   // Cores: verde = feito, amarelo = a fazer, vermelho = atrasado.
   // ===================================================================
   const TIPOS = { reels: "Reels / vídeo", carrossel: "Carrossel", foto: "Foto", story: "Story" };
+  const TIPO_ICONE = { reels: "video", carrossel: "carrossel", foto: "foto", story: "story" };
+  const iconeTipo = (tipo) => `<span class="ic-tipo" aria-hidden="true">${ICON[TIPO_ICONE[tipo]] || ""}</span>`;
+  const CATEGORIAS = { pessoal: "Pessoal", publi: "Publi", ugc: "UGC", mentora: "Mentora" };
+  const COM_MARCA = ["publi", "ugc"]; // categorias feitas pra uma marca (mostra o campo Marca)
   const ETAPAS = [
     { s: "criar", t: "Para criar" },
     { s: "postar", t: "Para postar" },
@@ -670,7 +679,7 @@
     return [
       { k: "gravar", t: "Gravar", data: c.data_gravar, cor: corPrazo(c.data_gravar, c.gravado || postado) },
       { k: "editar", t: "Editar", data: c.data_editar, cor: corPrazo(c.data_editar, c.editado || postado) },
-      { k: "postar", t: "Postar", data: c.data_postagem, cor: corPrazo(c.data_postagem, postado) },
+      { k: "postar", t: postado ? "Postado" : "Postar", data: c.data_postagem, cor: corPrazo(c.data_postagem, postado) },
     ].filter((p) => p.data);
   }
   function corGeral(c) {
@@ -829,9 +838,8 @@
       <input type="search" id="cf-busca" placeholder="Buscar título, marca, legenda" value="${esc(f.busca)}" aria-label="Buscar conteúdos">
       <select id="cf-tipo" aria-label="Filtrar por tipo"><option value="">Todos os tipos</option>
         ${Object.entries(TIPOS).map(([v, t]) => `<option value="${v}" ${f.tipo === v ? "selected" : ""}>${t}</option>`).join("")}</select>
-      <select id="cf-categoria" aria-label="Filtrar por categoria"><option value="">Pessoal e publi</option>
-        <option value="pessoal" ${f.categoria === "pessoal" ? "selected" : ""}>Só pessoal</option>
-        <option value="publi" ${f.categoria === "publi" ? "selected" : ""}>Só publi</option></select>
+      <select id="cf-categoria" aria-label="Filtrar por categoria"><option value="">Todas as categorias</option>
+        ${Object.entries(CATEGORIAS).map(([v, t]) => `<option value="${v}" ${f.categoria === v ? "selected" : ""}>Só ${t.toLowerCase() === "ugc" ? "UGC" : t.toLowerCase()}</option>`).join("")}</select>
       <select id="cf-etiqueta" aria-label="Filtrar por etiqueta"><option value="">Todas as etiquetas</option>
         ${etqs.map((t) => `<option value="${esc(t)}" ${f.etiqueta === t ? "selected" : ""}>${esc(t)}</option>`).join("")}</select>
     </div>`;
@@ -860,8 +868,8 @@
       ${thumb ? `<img class="card-thumb" src="${esc(thumb)}" alt="" loading="lazy">` : ""}
       <div class="card-corpo">
         <div class="card-selos">
-          <span class="selo-tipo">${esc(TIPOS[c.tipo] || c.tipo || "")}</span>
-          ${c.categoria === "publi" ? `<span class="selo-publi">Publi${c.marca ? " · " + esc(c.marca) : ""}</span>` : ""}
+          <span class="selo-tipo">${iconeTipo(c.tipo)}${esc(TIPOS[c.tipo] || c.tipo || "")}</span>
+          ${c.categoria && c.categoria !== "pessoal" ? `<span class="selo-cat cat-${esc(c.categoria)}">${esc(CATEGORIAS[c.categoria] || c.categoria)}${COM_MARCA.includes(c.categoria) && c.marca ? " · " + esc(c.marca) : ""}</span>` : ""}
         </div>
         <h4>${esc(c.titulo)}</h4>
         ${ps.length ? `<div class="card-prazos">${ps.map((p) => `<span class="prazo cor-${p.cor}"><i></i>${p.t} ${diaMes(p.data)}</span>`).join("")}</div>` : ""}
@@ -909,7 +917,8 @@
     const porDia = {};
     lista.forEach((c) => prazos(c).forEach((p) => { (porDia[p.data] = porDia[p.data] || []).push({ c, p }); }));
     Object.values(porDia).forEach((evs) => evs.sort((a, b) => ordemK[a.p.k] - ordemK[b.p.k]));
-    const evento = ({ c, p }) => `<button type="button" class="evento cor-${p.cor}" data-abrir="${esc(c.id)}" title="${esc(p.t + ": " + c.titulo)}"><i></i><b>${p.t}</b> ${esc(c.titulo)}</button>`;
+    // bolinha = status (cor), ícone = tipo (vídeo, foto, carrossel, story)
+    const evento = ({ c, p }) => `<button type="button" class="evento cor-${p.cor}" data-abrir="${esc(c.id)}" title="${esc(`${p.t}: ${c.titulo} (${TIPOS[c.tipo] || c.tipo})`)}"><i></i>${iconeTipo(c.tipo)}<b>${p.t}</b> ${esc(c.titulo)}</button>`;
 
     let celulas = "";
     for (let i = 0; i < inicio; i++) celulas += `<div class="dia fora"></div>`;
@@ -942,7 +951,7 @@
       </div>
       <div class="mes-grade">${["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"].map((d) => `<div class="dia-semana">${d}</div>`).join("")}${celulas}</div>
       <div class="agenda">${agenda}</div>
-      ${semData.length ? `<h3 class="secao-titulo">Sem data definida</h3><div class="sem-data">${semData.map((c) => `<button type="button" class="evento cor-neutro" data-abrir="${esc(c.id)}"><i></i>${esc(c.titulo)}</button>`).join("")}</div>` : ""}`;
+      ${semData.length ? `<h3 class="secao-titulo">Sem data definida</h3><div class="sem-data">${semData.map((c) => `<button type="button" class="evento cor-neutro" data-abrir="${esc(c.id)}"><i></i>${iconeTipo(c.tipo)}${esc(c.titulo)}</button>`).join("")}</div>` : ""}`;
   }
 
   // ---------- Desempenho e Ideias (fase 2) ----------
@@ -1009,10 +1018,10 @@
         <input type="text" id="ce-titulo" value="${esc(ed.titulo)}" placeholder="Ex: Rotina de skincare da manhã" maxlength="120"></label>
       <div class="grade grade-3">
         <label class="campo"><span class="rotulo">Tipo</span><select id="ce-tipo">${opcoes(TIPOS, ed.tipo)}</select></label>
-        <label class="campo"><span class="rotulo">Categoria</span><select id="ce-categoria">${opcoes({ pessoal: "Pessoal", publi: "Publi (marca)" }, ed.categoria)}</select></label>
+        <label class="campo"><span class="rotulo">Categoria</span><select id="ce-categoria">${opcoes({ pessoal: "Pessoal", publi: "Publi (marca)", ugc: "UGC (marca)", mentora: "Mentora" }, ed.categoria)}</select></label>
         <label class="campo"><span class="rotulo">Etapa</span><select id="ce-status">${opcoes(Object.fromEntries(ETAPAS.map((e) => [e.s, e.t])), ed.status)}</select></label>
       </div>
-      <label class="campo" id="ce-marca-campo" ${ed.categoria === "publi" ? "" : "hidden"}><span class="rotulo">Marca</span>
+      <label class="campo" id="ce-marca-campo" ${COM_MARCA.includes(ed.categoria) ? "" : "hidden"}><span class="rotulo">Marca</span>
         <input type="text" id="ce-marca" value="${esc(ed.marca || "")}" placeholder="Nome da marca"></label>
 
       <span class="rotulo">Datas</span>
@@ -1089,7 +1098,7 @@
     m.onchange = async (e) => {
       sujo = true;
       const t = e.target;
-      if (t.id === "ce-categoria") $("#ce-marca-campo").hidden = t.value !== "publi";
+      if (t.id === "ce-categoria") $("#ce-marca-campo").hidden = !COM_MARCA.includes(t.value);
       if (t.id === "ce-mini-arquivo" && t.files[0]) {
         try {
           novaMini = await reduzirImagem(t.files[0]);
@@ -1198,7 +1207,7 @@
       const campos = {
         ...(novo ? {} : { id: ed.id }),
         titulo, status, tipo: v("ce-tipo"), categoria,
-        marca: categoria === "publi" ? v("ce-marca").trim() || null : null,
+        marca: COM_MARCA.includes(categoria) ? v("ce-marca").trim() || null : null,
         data_gravar: v("ce-gravar") || null,
         data_editar: v("ce-editar") || null,
         data_postagem: v("ce-postar") || (status === "postado" ? hoje() : null),

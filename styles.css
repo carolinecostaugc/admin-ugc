@@ -451,9 +451,16 @@ textarea.link-grande { min-height: 70px; font-family: ui-monospace, Consolas, mo
 .card-corpo { padding: 12px 12px 8px; }
 .card-corpo h4 { font-size: 15px; font-weight: 600; line-height: 1.3; margin: 6px 0 8px; overflow-wrap: anywhere; }
 .card-selos { display: flex; flex-wrap: wrap; gap: 5px; }
-.selo-tipo, .selo-publi { font-size: 11px; font-weight: 600; letter-spacing: .04em; padding: 2px 8px; border-radius: 99px; }
+.selo-tipo, .selo-cat { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; font-weight: 600; letter-spacing: .04em; padding: 2px 8px; border-radius: 99px; }
 .selo-tipo { background: var(--cortina-2); color: var(--cafe-2); }
-.selo-publi { background: #f3e2d6; color: #8a4a2b; }
+.selo-cat.cat-publi { background: #f3e2d6; color: #8a4a2b; }
+.selo-cat.cat-ugc { background: #e3e7d8; color: #474e3d; }
+.selo-cat.cat-mentora { background: #f5e7cf; color: #7a5212; }
+/* ícone do tipo (vídeo, foto, carrossel, story) */
+.ic-tipo { display: inline-flex; flex-shrink: 0; color: var(--cafe-2); }
+.ic-tipo svg { width: 13px; height: 13px; }
+.evento .ic-tipo svg { width: 14px; height: 14px; }
+.agenda-dia .evento .ic-tipo svg, .sem-data .evento .ic-tipo svg { width: 14px; height: 14px; }
 .card-prazos { display: flex; flex-wrap: wrap; gap: 4px 10px; margin-bottom: 8px; }
 .card-mover { display: flex; justify-content: flex-end; gap: 2px; margin-top: 4px; }
 .card-mover .btn-icone { width: 30px; height: 30px; }
