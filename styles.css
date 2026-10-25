@@ -418,6 +418,109 @@ textarea.link-grande { min-height: 70px; font-family: ui-monospace, Consolas, mo
 .toast.erro { background: var(--erro); color: #fff; }
 .toast.ok { background: var(--sucesso); color: #fff; }
 
+/* ---------------- Calendário de conteúdo ---------------- */
+/* Cores de status: verde = feito, amarelo = a fazer, vermelho = atrasado */
+.cor-verde { --cor: var(--sucesso); --cor-suave: var(--sucesso-suave); }
+.cor-amarelo { --cor: #b7791f; --cor-suave: var(--atencao-suave); }
+.cor-vermelho { --cor: var(--erro); --cor-suave: var(--erro-suave); }
+.cor-neutro { --cor: var(--borda-forte); --cor-suave: var(--superficie-2); }
+.prazo { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; font-weight: 500; color: var(--texto); white-space: nowrap; }
+.prazo i { width: 8px; height: 8px; border-radius: 50%; background: var(--cor); flex-shrink: 0; }
+.prazo.cor-vermelho { color: var(--erro); }
+
+.quadro { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; align-items: start; }
+.coluna { background: rgba(236, 228, 215, .55); border: 1px solid var(--borda); border-radius: var(--raio-g); padding: 12px; }
+.coluna-cab { display: flex; align-items: center; justify-content: space-between; padding: 4px 6px 12px; }
+.coluna-cab h3 { font-family: var(--serif); font-size: 1.3rem; font-weight: 600; }
+.contagem { font-size: 12px; font-weight: 600; background: var(--superficie); border-radius: 99px; padding: 2px 9px; color: var(--texto-2); }
+.coluna-postado .coluna-cab h3 { color: var(--sucesso); }
+.coluna-lista { display: flex; flex-direction: column; gap: 10px; min-height: 90px; border-radius: 12px; transition: background .15s; }
+.coluna-lista.alvo { background: var(--destaque-suave); outline: 2px dashed var(--destaque); outline-offset: 2px; }
+.coluna-lista.alvo .coluna-vazia { display: none; }
+.coluna-vazia { font-size: 13px; color: var(--texto-2); text-align: center; padding: 26px 10px; border: 1px dashed var(--borda-forte); border-radius: 12px; margin: 0; }
+.coluna-add { width: 100%; margin-top: 8px; justify-content: center; }
+
+.card-conteudo {
+  background: var(--superficie); border: 1px solid var(--borda); border-left: 4px solid var(--cor);
+  border-radius: 14px; box-shadow: var(--sombra); cursor: grab; overflow: hidden; transition: transform .15s, box-shadow .15s;
+}
+.card-conteudo:hover { transform: translateY(-1px); box-shadow: var(--sombra-g); }
+.card-conteudo:focus-visible { outline: 2px solid var(--destaque); outline-offset: 2px; }
+.card-conteudo.arrastando { opacity: .45; }
+.card-thumb { display: block; width: 100%; height: 130px; object-fit: cover; background: var(--superficie-2); }
+.card-corpo { padding: 12px 12px 8px; }
+.card-corpo h4 { font-size: 15px; font-weight: 600; line-height: 1.3; margin: 6px 0 8px; overflow-wrap: anywhere; }
+.card-selos { display: flex; flex-wrap: wrap; gap: 5px; }
+.selo-tipo, .selo-publi { font-size: 11px; font-weight: 600; letter-spacing: .04em; padding: 2px 8px; border-radius: 99px; }
+.selo-tipo { background: var(--cortina-2); color: var(--cafe-2); }
+.selo-publi { background: #f3e2d6; color: #8a4a2b; }
+.card-prazos { display: flex; flex-wrap: wrap; gap: 4px 10px; margin-bottom: 8px; }
+.card-mover { display: flex; justify-content: flex-end; gap: 2px; margin-top: 4px; }
+.card-mover .btn-icone { width: 30px; height: 30px; }
+
+/* Visão do mês */
+.mes-nav { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+.mes-nav h2 { min-width: 200px; text-align: center; }
+.mes-nav .espaco { flex: 1; }
+.legenda { display: inline-flex; gap: 14px; flex-wrap: wrap; }
+.mes-grade { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); border: 1px solid var(--borda); border-radius: var(--raio-g); overflow: hidden; background: var(--borda); gap: 1px; }
+.dia-semana { background: var(--superficie-2); font-size: 11px; font-weight: 600; letter-spacing: .14em; text-transform: uppercase; color: var(--texto-2); padding: 8px; text-align: center; }
+.dia { background: var(--superficie); min-height: 112px; padding: 6px; display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.dia.fora { background: var(--superficie-2); }
+.dia-num { font-size: 12.5px; font-weight: 600; color: var(--texto-2); margin-bottom: 2px; }
+.dia.hoje { background: var(--destaque-suave); }
+.dia.hoje .dia-num { color: #fff; background: var(--destaque); border-radius: 99px; width: 24px; height: 24px; display: grid; place-items: center; }
+.evento {
+  display: flex; align-items: center; gap: 5px; width: 100%; text-align: left; font: inherit; font-size: 11.5px; line-height: 1.25;
+  border: 0; border-radius: 6px; padding: 3px 6px; background: var(--cor-suave); color: var(--texto); cursor: pointer;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.evento:hover { filter: brightness(.96); }
+.evento:focus-visible { outline: 2px solid var(--destaque); outline-offset: 1px; }
+.evento i { width: 7px; height: 7px; border-radius: 50%; background: var(--cor); flex-shrink: 0; }
+.evento b { font-weight: 600; }
+.mais { font-size: 11px; color: var(--texto-2); padding-left: 4px; }
+.agenda { display: none; }
+.agenda-dia { margin-bottom: 14px; }
+.agenda-dia h4 { font-size: 13px; color: var(--texto-2); margin: 0 0 6px; }
+.agenda-dia.hoje h4 { color: var(--destaque); }
+.agenda-dia .evento { font-size: 13.5px; padding: 8px 10px; margin-bottom: 4px; white-space: normal; }
+.sem-data { display: flex; flex-wrap: wrap; gap: 6px; }
+.sem-data .evento { width: auto; font-size: 13px; padding: 6px 10px; }
+
+/* Ficha do conteúdo */
+.sub-rotulo { display: block; font-size: 13px; font-weight: 500; margin-bottom: 4px; }
+.check { display: inline-flex; align-items: center; gap: 6px; font-size: 13.5px; margin-top: 6px; cursor: pointer; }
+.check input { width: 16px; height: 16px; accent-color: var(--destaque); }
+input[type="date"] {
+  width: 100%; font: inherit; font-size: 14px; color: var(--texto); background: var(--superficie);
+  border: 1px solid var(--borda-forte); border-radius: 12px; padding: 9px 12px;
+}
+input[type="date"]:focus { outline: none; border-color: var(--destaque); box-shadow: 0 0 0 3px var(--destaque-suave); }
+.mini-caixa {
+  height: 150px; border: 1px dashed var(--borda-forte); border-radius: 12px; background: var(--superficie-2);
+  display: grid; place-items: center; overflow: hidden; margin-bottom: 8px;
+}
+.mini-caixa img { width: 100%; height: 100%; object-fit: cover; }
+.mini-caixa .muted { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; }
+.linha-btns { display: flex; gap: 6px; flex-wrap: wrap; }
+.link-linha { display: grid; grid-template-columns: minmax(0, .8fr) minmax(0, 1.2fr) auto auto; gap: 6px; align-items: center; margin-bottom: 6px; }
+.link-linha input { padding: 8px 10px; font-size: 13.5px; }
+.posts-mini { grid-template-columns: repeat(auto-fill, minmax(84px, 1fr)); margin-top: 10px; max-height: 280px; overflow-y: auto; }
+.posts-mini .post { padding: 0; border: 2px solid transparent; font: inherit; }
+.posts-mini .post:hover, .posts-mini .post:focus-visible { border-color: var(--destaque); outline: none; }
+
+/* Agenda no Início */
+.agenda-inicio { list-style: none; margin: 0; padding: 0; }
+.agenda-inicio a { display: flex; align-items: center; gap: 14px; padding: 10px 6px; border-bottom: 1px solid var(--borda); color: var(--texto); text-decoration: none; border-radius: 8px; }
+.agenda-inicio li:last-child a { border-bottom: 0; }
+.agenda-inicio a:hover { background: var(--superficie-2); }
+.agenda-inicio .quando { width: 92px; flex-shrink: 0; font-size: 13px; color: var(--texto-2); text-transform: capitalize; }
+.agenda-inicio a.cor-vermelho .quando { color: var(--erro); font-weight: 600; }
+.agenda-inicio .prazo { width: 70px; flex-shrink: 0; }
+.agenda-inicio .oque { flex: 1; min-width: 0; font-size: 14.5px; }
+.agenda-inicio .sub { color: var(--texto-2); font-size: 13px; }
+
 /* =====================================================================
    IDENTIDADE CAROLINE COSTA
    Acabamento da marca por cima do sistema de design.
@@ -512,9 +615,21 @@ h1, h2, .kpi .valor, .marca-nome { font-variant-numeric: lining-nums tabular-num
   .grade-3 { grid-template-columns: 1fr 1fr; }
   .grade-4 { grid-template-columns: 1fr 1fr; }
 }
+@media (max-width: 900px) {
+  .quadro { grid-template-columns: 1fr; }
+  .mes-grade { display: none; }
+  .agenda { display: block; }
+  .mes-nav h2 { min-width: 0; flex: 1; font-size: 1.3rem; white-space: nowrap; }
+  .mes-nav .espaco { display: none; }
+  .mes-nav .legenda { flex-basis: 100%; }
+}
 @media (max-width: 560px) {
   .info-grade { grid-template-columns: 1fr; }
-  .ferramentas select, .ferramentas .btn { flex: 1 1 100%; }
+  .link-linha { grid-template-columns: minmax(0, 1fr) auto auto; }
+  .link-linha input[data-c="rotulo"] { grid-column: 1 / -1; }
+  .agenda-inicio .quando { width: 70px; }
+  .ferramentas select { flex: 1 1 40%; }
+  .ferramentas .btn { flex: 1 1 100%; }
   .historico .quando { width: 92px; }
 }
 @media (max-width: 720px) {

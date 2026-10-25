@@ -57,6 +57,7 @@
     lixo: svg('<path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"/>'),
     editar: svg('<path d="M4 20h4L19 9l-4-4L4 16z"/>'),
     voltar: svg('<path d="M15 18l-6-6 6-6"/>'),
+    avancar: svg('<path d="M9 18l6-6-6-6"/>'),
     x: svg('<path d="M6 6l12 12M18 6 6 18"/>'),
     arquivo: svg('<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/>'),
     grafico: svg('<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>'),
@@ -95,6 +96,7 @@
   const CHAVE_ARQS = "teste_arquivos";
   const CHAVE_LEADS = "teste_leads";
   const CHAVE_ENTREGAS = "teste_entregas";
+  const CHAVE_CONTEUDOS = "teste_conteudos";
   let autosMapa = {}; // id da automação -> nome (usado na aba Leads)
 
   // Conta linhas de uma consulta (zero se falhar)
@@ -321,6 +323,87 @@
       } catch (e) { console.warn(e); return false; }
     },
 
+    // ---------- Conteúdos (Calendário) ----------
+    // Devolve { rows, erro, semTabela } (semTabela = falta rodar o 06_calendario.sql)
+    async listarConteudos() {
+      if (!USA_BANCO) return { rows: store.get(CHAVE_CONTEUDOS, []) };
+      try {
+        const { data, error } = await sb.from("conteudos").select("*").order("ordem", { ascending: true });
+        if (error) throw error;
+        return { rows: data || [] };
+      } catch (e) {
+        console.warn(e);
+        return { rows: [], erro: e.message, semTabela: /conteudos|PGRST205|42P01/.test(`${e.code} ${e.message}`) };
+      }
+    },
+
+    // Cria ou atualiza (só os campos enviados). Devolve o conteúdo salvo.
+    async salvarConteudo(campos) {
+      if (!USA_BANCO) {
+        const lista = store.get(CHAVE_CONTEUDOS, []);
+        const agora = new Date().toISOString();
+        let item = campos.id && lista.find((c) => c.id === campos.id);
+        if (item) Object.assign(item, campos, { updated_at: agora });
+        else { item = { etiquetas: [], links: [], ...campos, id: `teste-c-${Date.now()}`, created_at: agora, updated_at: agora }; lista.push(item); }
+        store.set(CHAVE_CONTEUDOS, lista);
+        return { ok: true, data: item, local: true };
+      }
+      try {
+        const { id, ...resto } = campos;
+        delete resto.created_at; delete resto.updated_at;
+        const q = id ? sb.from("conteudos").update(resto).eq("id", id) : sb.from("conteudos").insert(resto);
+        const { data, error } = await q.select().single();
+        if (error) throw error;
+        return { ok: true, data };
+      } catch (e) { console.warn(e); return { ok: false, erro: e.message }; }
+    },
+
+    async apagarConteudo(c) {
+      if (!USA_BANCO) {
+        store.set(CHAVE_CONTEUDOS, store.get(CHAVE_CONTEUDOS, []).filter((x) => x.id !== c.id));
+        return true;
+      }
+      try {
+        const { error } = await sb.from("conteudos").delete().eq("id", c.id);
+        if (error) throw error;
+        if (c.miniatura_path) await sb.storage.from("conteudos").remove([c.miniatura_path]);
+        return true;
+      } catch (e) { console.warn(e); return false; }
+    },
+
+    // Envia a miniatura (já reduzida). No teste local vira uma imagem embutida.
+    async enviarMiniatura(blob) {
+      if (!USA_BANCO) {
+        const url = await new Promise((ok) => { const r = new FileReader(); r.onload = () => ok(r.result); r.readAsDataURL(blob); });
+        return { ok: true, path: url };
+      }
+      try {
+        const path = `miniaturas/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.jpg`;
+        const { error } = await sb.storage.from("conteudos").upload(path, blob, { contentType: "image/jpeg" });
+        if (error) throw error;
+        return { ok: true, path };
+      } catch (e) { console.warn(e); return { ok: false, erro: e.message }; }
+    },
+    async apagarMiniatura(path) {
+      if (!USA_BANCO || !path) return;
+      try { await sb.storage.from("conteudos").remove([path]); } catch (_) { /* ignora */ }
+    },
+
+    // A pasta é privada: gera links temporários (1 hora) pras miniaturas
+    async urlsMiniaturas(paths) {
+      const mapa = {};
+      const lista = Array.from(new Set(paths.filter(Boolean)));
+      lista.filter((p) => p.startsWith("data:")).forEach((p) => { mapa[p] = p; });
+      const remotos = lista.filter((p) => !p.startsWith("data:"));
+      if (!USA_BANCO || !remotos.length) return mapa;
+      try {
+        const { data, error } = await sb.storage.from("conteudos").createSignedUrls(remotos, 3600);
+        if (error) throw error;
+        (data || []).forEach((d) => { if (d.signedUrl) mapa[d.path] = d.signedUrl; });
+      } catch (e) { console.warn(e); }
+      return mapa;
+    },
+
     // Edge Functions (só no ar, com login)
     // Sempre devolve um objeto; se falhar, vem { connected: false, erro: "motivo" }
     async funcao(nome) {
@@ -476,7 +559,7 @@
     $$(".menu a").forEach((a) => a.classList.toggle("ativo", a.dataset.rota === rota));
     $("#sidebar").classList.remove("aberto");
     window.scrollTo(0, 0);
-    if (rota === "calendario") return telaCalendario();
+    if (rota === "calendario") return telaCalendario(partes[1] || "quadro");
     if (rota === "instagram") return telaInstagram(partes[1] || "metricas");
     return telaInicio();
   }
@@ -502,17 +585,47 @@
         ${kpi("raio", "Automações ativas", "kpi-ativas", "respondendo agora")}
         ${kpi("enviar", "DMs enviadas", "kpi-dms", "nos últimos 7 dias")}
       </div>
+      <h2 class="secao-titulo">Agenda dos próximos 7 dias</h2>
+      <div class="cartao" id="inicio-agenda"><p class="muted">Carregando...</p></div>
       <h2 class="secao-titulo">Atalhos</h2>
       <div class="atalhos">
         <a class="btn btn-primario" href="#/instagram/automacoes">${ICON.raio} Criar ou editar automações</a>
         <a class="btn" href="#/instagram/metricas">${ICON.grafico} Ver métricas do Instagram</a>
         <a class="btn" href="#/calendario">${ICON.calendario} Calendário</a>
       </div>`;
+    agendaInicio();
     const c = await api.contagens();
     if (!$("#kpi-leads")) return; // trocou de tela enquanto carregava
     $("#kpi-leads").textContent = fmtNum(c.leads);
     $("#kpi-ativas").textContent = fmtNum(c.ativas);
     $("#kpi-dms").textContent = fmtNum(c.dms7);
+  }
+
+  // O que gravar, editar e postar nos próximos 7 dias (e o que está atrasado)
+  async function agendaInicio() {
+    const r = await api.listarConteudos();
+    const alvo = $("#inicio-agenda");
+    if (!alvo) return;
+    const h = hoje();
+    const limite = dataISO(new Date(Date.now() + 7 * 864e5));
+    const itens = [];
+    r.rows.forEach((c) => prazos(c).forEach((p) => {
+      if (p.cor === "vermelho" || (p.cor === "amarelo" && p.data <= limite)) itens.push({ c, p });
+    }));
+    itens.sort((a, b) => (a.p.data < b.p.data ? -1 : a.p.data > b.p.data ? 1 : 0));
+    if (!itens.length) {
+      alvo.innerHTML = `<p class="muted" style="margin:0">${r.semTabela ? "O calendário ainda não foi ativado no banco (veja o LEIA-ME)." : "Nada pra gravar, editar ou postar nos próximos dias."} <a href="#/calendario">Abrir o calendário</a></p>`;
+      return;
+    }
+    const amanha = dataISO(new Date(Date.now() + 864e5));
+    const quando = (d) => (d < h ? "Atrasado" : d === h ? "Hoje" : d === amanha ? "Amanhã" : new Date(d + "T12:00:00").toLocaleDateString("pt-BR", { weekday: "short", day: "2-digit", month: "2-digit" }));
+    alvo.innerHTML = `<ul class="agenda-inicio">${itens.slice(0, 8).map(({ c, p }) => `
+      <li><a href="#/calendario/mes" class="cor-${p.cor}">
+        <span class="quando">${esc(quando(p.data))}</span>
+        <span class="prazo cor-${p.cor}"><i></i>${p.t}</span>
+        <span class="oque">${esc(c.titulo)}${c.categoria === "publi" && c.marca ? ` <span class="sub">· ${esc(c.marca)}</span>` : ""}</span>
+      </a></li>`).join("")}</ul>
+      ${itens.length > 8 ? `<p class="muted" style="margin:10px 0 0;font-size:13px">E mais ${itens.length - 8}. <a href="#/calendario/mes">Ver tudo</a></p>` : ""}`;
   }
 
   function kpi(icone, titulo, id, sub) {
@@ -523,15 +636,604 @@
     </div>`;
   }
 
-  // ---------- Calendário (placeholder) ----------
-  function telaCalendario() {
+  // ===================================================================
+  // CALENDÁRIO DE CONTEÚDO
+  // Quadro (Para criar > Para postar > Postados), visão do mês e a ficha
+  // de cada conteúdo. Desempenho e Ideias chegam na fase 2.
+  // Cores: verde = feito, amarelo = a fazer, vermelho = atrasado.
+  // ===================================================================
+  const TIPOS = { reels: "Reels / vídeo", carrossel: "Carrossel", foto: "Foto", story: "Story" };
+  const ETAPAS = [
+    { s: "criar", t: "Para criar" },
+    { s: "postar", t: "Para postar" },
+    { s: "postado", t: "Postados" },
+  ];
+  const CAL = {
+    sub: "quadro", lista: [], urls: {}, urlsEm: 0, mes: null, semTabela: false, erro: "",
+    filtro: { busca: "", tipo: "", categoria: "", etiqueta: "" },
+    soltou: false,
+  };
+
+  const pad2 = (n) => String(n).padStart(2, "0");
+  const dataISO = (d) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+  const hoje = () => dataISO(new Date());
+  const diaMes = (iso) => (iso ? `${iso.slice(8, 10)}/${iso.slice(5, 7)}` : "");
+
+  function corPrazo(data, feito) {
+    if (feito) return "verde";
+    if (!data) return "neutro";
+    return data < hoje() ? "vermelho" : "amarelo";
+  }
+  // Os prazos de um conteúdo (gravar, editar, postar), cada um com sua cor
+  function prazos(c) {
+    const postado = c.status === "postado";
+    return [
+      { k: "gravar", t: "Gravar", data: c.data_gravar, cor: corPrazo(c.data_gravar, c.gravado || postado) },
+      { k: "editar", t: "Editar", data: c.data_editar, cor: corPrazo(c.data_editar, c.editado || postado) },
+      { k: "postar", t: "Postar", data: c.data_postagem, cor: corPrazo(c.data_postagem, postado) },
+    ].filter((p) => p.data);
+  }
+  function corGeral(c) {
+    if (c.status === "postado") return "verde";
+    const ps = prazos(c);
+    if (ps.some((p) => p.cor === "vermelho")) return "vermelho";
+    return ps.some((p) => p.cor === "amarelo") ? "amarelo" : "neutro";
+  }
+
+  async function carregarConteudos() {
+    const r = await api.listarConteudos();
+    CAL.lista = r.rows;
+    CAL.semTabela = !!r.semTabela;
+    CAL.erro = r.semTabela ? "" : r.erro || "";
+    // links temporários das miniaturas (renova a cada 50 minutos)
+    if (Date.now() - CAL.urlsEm > 50 * 60 * 1000) { CAL.urls = {}; CAL.urlsEm = Date.now(); }
+    const faltam = CAL.lista.map((c) => c.miniatura_path).filter((p) => p && !CAL.urls[p]);
+    if (faltam.length) Object.assign(CAL.urls, await api.urlsMiniaturas(faltam));
+  }
+
+  async function telaCalendario(sub) {
+    if (!["quadro", "mes", "desempenho", "ideias"].includes(sub)) sub = "quadro";
+    CAL.sub = sub;
+    if (!CAL.mes) { const d = new Date(); CAL.mes = new Date(d.getFullYear(), d.getMonth(), 1); }
     conteudo().innerHTML = `
-      <div class="cartao vazio em-breve">
-        <div class="icone-grande">${ICON.calendario}</div>
-        <h2>Calendário</h2>
-        <p>Essa área vai chegar em breve pra você planejar seus conteúdos.</p>
-        <span class="selo off">Em breve</span>
-      </div>`;
+      <div class="cabecalho">
+        <div>
+          <p class="sobretitulo">Planejamento</p>
+          <h1>Calendário</h1>
+          <p class="muted">Do roteiro ao post: o que gravar, editar e postar.</p>
+        </div>
+        <button class="btn btn-primario" id="cal-novo">${ICON.mais} Novo conteúdo</button>
+      </div>
+      <nav class="abas">
+        ${[["quadro", "Quadro"], ["mes", "Calendário"], ["desempenho", "Desempenho"], ["ideias", "Ideias"]]
+          .map(([k, t]) => `<a href="#/calendario/${k}" class="${sub === k ? "ativo" : ""}">${t}</a>`).join("")}
+      </nav>
+      <div id="cal-conteudo"><p class="muted">Carregando...</p></div>`;
+    $("#cal-novo").addEventListener("click", () => abrirConteudo(null, { status: "criar" }));
+    if (sub === "desempenho" || sub === "ideias") return telaFase2(sub);
+    await carregarConteudos();
+    if (!$("#cal-conteudo") || CAL.sub !== sub) return; // trocou de tela enquanto carregava
+    desenharCal();
+  }
+
+  // Monta aviso + filtros + área (quadro ou mês) e liga os eventos
+  function desenharCal() {
+    const alvo = $("#cal-conteudo");
+    if (!alvo) return;
+    alvo.innerHTML = `
+      ${CAL.semTabela ? `<p class="alerta" style="margin:0 0 14px">Pra salvar seus conteúdos, rode o script <b>06_calendario.sql</b> no Supabase (veja o LEIA-ME).</p>` : ""}
+      ${CAL.erro ? `<p class="erro">Não foi possível carregar: ${esc(CAL.erro)}</p>` : ""}
+      ${barraFiltros()}
+      <div id="cal-area"></div>`;
+    desenharArea();
+
+    const area = $("#cal-area");
+    // (propriedades em vez de addEventListener: redesenhar não acumula eventos)
+    alvo.oninput = (e) => {
+      if (e.target.id === "cf-busca") { CAL.filtro.busca = e.target.value; desenharArea(); }
+    };
+    alvo.onchange = (e) => {
+      const k = { "cf-tipo": "tipo", "cf-categoria": "categoria", "cf-etiqueta": "etiqueta" }[e.target.id];
+      if (k) { CAL.filtro[k] = e.target.value; desenharArea(); }
+    };
+    area.addEventListener("click", (e) => {
+      const b = e.target.closest("[data-mover],[data-novo],[data-abrir],[data-mes],.card-conteudo");
+      if (!b) return;
+      if (b.dataset.mover) return moverConteudo(b.closest(".card-conteudo").dataset.id, b.dataset.mover);
+      if (b.dataset.novo) return abrirConteudo(null, { status: b.dataset.novo });
+      if (b.dataset.mes !== undefined) {
+        const n = Number(b.dataset.mes);
+        const d = new Date();
+        CAL.mes = n === 0 ? new Date(d.getFullYear(), d.getMonth(), 1) : new Date(CAL.mes.getFullYear(), CAL.mes.getMonth() + n, 1);
+        return desenharArea();
+      }
+      const id = b.dataset.abrir || b.dataset.id;
+      const c = CAL.lista.find((x) => x.id === id);
+      if (c) abrirConteudo(c);
+    });
+    area.addEventListener("keydown", (e) => {
+      const card = e.target.closest(".card-conteudo");
+      if (card && e.target === card && (e.key === "Enter" || e.key === " ")) {
+        e.preventDefault();
+        const c = CAL.lista.find((x) => x.id === card.dataset.id);
+        if (c) abrirConteudo(c);
+      }
+    });
+
+    // Arrastar e soltar (computador). No celular use os botões ‹ › do card.
+    area.addEventListener("dragstart", (e) => {
+      const card = e.target.closest(".card-conteudo");
+      if (!card) return;
+      CAL.soltou = false;
+      CAL.arrastando = card.dataset.id;
+      e.dataTransfer.effectAllowed = "move";
+      e.dataTransfer.setData("text/plain", card.dataset.id);
+      setTimeout(() => card.classList.add("arrastando"), 0); // depois, pra imagem do arraste sair normal
+    });
+    const cardArrastado = () => CAL.arrastando && area.querySelector(`.card-conteudo[data-id="${CSS.escape(CAL.arrastando)}"]`);
+    area.addEventListener("dragover", (e) => {
+      const lista = e.target.closest(".coluna") && e.target.closest(".coluna").querySelector(".coluna-lista");
+      const card = cardArrastado();
+      if (!lista || !card) return;
+      e.preventDefault();
+      $$(".coluna-lista.alvo").forEach((l) => l !== lista && l.classList.remove("alvo"));
+      lista.classList.add("alvo");
+      const depois = [...lista.querySelectorAll(".card-conteudo")].filter((c) => c !== card)
+        .find((c) => { const r = c.getBoundingClientRect(); return e.clientY < r.top + r.height / 2; });
+      if (depois) lista.insertBefore(card, depois); else lista.appendChild(card);
+    });
+    area.addEventListener("drop", (e) => {
+      const card = cardArrastado();
+      const lista = card && card.closest(".coluna-lista");
+      if (!lista) return;
+      e.preventDefault();
+      CAL.soltou = true;
+      const ids = [...lista.querySelectorAll(".card-conteudo")].map((x) => x.dataset.id);
+      const i = ids.indexOf(card.dataset.id);
+      const ord = (id) => (CAL.lista.find((x) => x.id === id) || {}).ordem || 0;
+      const ant = ids[i - 1], prox = ids[i + 1];
+      const ordem = ant && prox ? (ord(ant) + ord(prox)) / 2 : ant ? ord(ant) + 1 : prox ? ord(prox) - 1 : 0;
+      moverConteudo(card.dataset.id, lista.dataset.status, ordem);
+    });
+    area.addEventListener("dragend", () => {
+      $$(".coluna-lista.alvo").forEach((l) => l.classList.remove("alvo"));
+      const c = cardArrastado();
+      if (c) c.classList.remove("arrastando");
+      CAL.arrastando = null;
+      if (!CAL.soltou) desenharArea(); // soltou fora: volta como estava
+    });
+  }
+
+  function desenharArea() {
+    const area = $("#cal-area");
+    if (!area) return;
+    area.innerHTML = CAL.sub === "mes" ? htmlMes() : htmlQuadro();
+  }
+
+  function filtrados() {
+    const f = CAL.filtro;
+    const b = normal(f.busca).trim();
+    return CAL.lista.filter((c) =>
+      (!b || [c.titulo, c.marca, c.legenda, ...(c.etiquetas || [])].some((v) => normal(v).includes(b))) &&
+      (!f.tipo || c.tipo === f.tipo) &&
+      (!f.categoria || c.categoria === f.categoria) &&
+      (!f.etiqueta || (c.etiquetas || []).includes(f.etiqueta)));
+  }
+  const etiquetasConteudo = () => Array.from(new Set(CAL.lista.flatMap((c) => c.etiquetas || []))).sort((a, b) => a.localeCompare(b, "pt-BR"));
+
+  function barraFiltros() {
+    const f = CAL.filtro;
+    const etqs = etiquetasConteudo();
+    if (f.etiqueta && !etqs.includes(f.etiqueta)) f.etiqueta = "";
+    return `<div class="ferramentas">
+      <input type="search" id="cf-busca" placeholder="Buscar título, marca, legenda" value="${esc(f.busca)}" aria-label="Buscar conteúdos">
+      <select id="cf-tipo" aria-label="Filtrar por tipo"><option value="">Todos os tipos</option>
+        ${Object.entries(TIPOS).map(([v, t]) => `<option value="${v}" ${f.tipo === v ? "selected" : ""}>${t}</option>`).join("")}</select>
+      <select id="cf-categoria" aria-label="Filtrar por categoria"><option value="">Pessoal e publi</option>
+        <option value="pessoal" ${f.categoria === "pessoal" ? "selected" : ""}>Só pessoal</option>
+        <option value="publi" ${f.categoria === "publi" ? "selected" : ""}>Só publi</option></select>
+      <select id="cf-etiqueta" aria-label="Filtrar por etiqueta"><option value="">Todas as etiquetas</option>
+        ${etqs.map((t) => `<option value="${esc(t)}" ${f.etiqueta === t ? "selected" : ""}>${esc(t)}</option>`).join("")}</select>
+    </div>`;
+  }
+
+  // ---------- Quadro ----------
+  function htmlQuadro() {
+    const lista = filtrados();
+    return `<div class="quadro">${ETAPAS.map((e, i) => {
+      const cards = lista.filter((c) => c.status === e.s).sort((a, b) => (a.ordem || 0) - (b.ordem || 0));
+      return `<section class="coluna coluna-${e.s}" aria-label="${e.t}">
+        <header class="coluna-cab"><h3>${e.t}</h3><span class="contagem">${cards.length}</span></header>
+        <div class="coluna-lista" data-status="${e.s}">
+          ${cards.map((c) => htmlCard(c, i)).join("") || `<p class="coluna-vazia">${i === 0 ? "Suas ideias e roteiros começam aqui" : "Arraste um card pra cá"}</p>`}
+        </div>
+        <button type="button" class="btn btn-fantasma btn-pequeno coluna-add" data-novo="${e.s}">${ICON.mais} Adicionar</button>
+      </section>`;
+    }).join("")}</div>`;
+  }
+
+  function htmlCard(c, i) {
+    const thumb = c.miniatura_path && CAL.urls[c.miniatura_path];
+    const ant = ETAPAS[i - 1], prox = ETAPAS[i + 1];
+    const ps = prazos(c);
+    return `<article class="card-conteudo cor-${corGeral(c)}" draggable="true" data-id="${esc(c.id)}" tabindex="0" aria-label="${esc(c.titulo)}, abrir">
+      ${thumb ? `<img class="card-thumb" src="${esc(thumb)}" alt="" loading="lazy">` : ""}
+      <div class="card-corpo">
+        <div class="card-selos">
+          <span class="selo-tipo">${esc(TIPOS[c.tipo] || c.tipo || "")}</span>
+          ${c.categoria === "publi" ? `<span class="selo-publi">Publi${c.marca ? " · " + esc(c.marca) : ""}</span>` : ""}
+        </div>
+        <h4>${esc(c.titulo)}</h4>
+        ${ps.length ? `<div class="card-prazos">${ps.map((p) => `<span class="prazo cor-${p.cor}"><i></i>${p.t} ${diaMes(p.data)}</span>`).join("")}</div>` : ""}
+        ${chips(c.etiquetas, 3)}
+        <div class="card-mover">
+          ${ant ? `<button type="button" class="btn-icone" data-mover="${ant.s}" aria-label="Mover para ${ant.t}" title="Mover para ${ant.t}">${ICON.voltar}</button>` : ""}
+          ${prox ? `<button type="button" class="btn-icone" data-mover="${prox.s}" aria-label="Mover para ${prox.t}" title="Mover para ${prox.t}">${ICON.avancar}</button>` : ""}
+        </div>
+      </div>
+    </article>`;
+  }
+
+  // Muda a etapa (e a posição) de um card. Atualiza a tela na hora e salva.
+  async function moverConteudo(id, status, ordem) {
+    const c = CAL.lista.find((x) => x.id === id);
+    if (!c) return;
+    if (ordem === undefined) {
+      const na = CAL.lista.filter((x) => x.status === status && x.id !== id);
+      ordem = na.length ? Math.max(...na.map((x) => x.ordem || 0)) + 1 : 0;
+    }
+    const campos = { id, status, ordem };
+    if (status === "postado" && !c.data_postagem) campos.data_postagem = hoje();
+    const antes = { ...c };
+    Object.assign(c, campos);
+    desenharArea();
+    const r = await api.salvarConteudo(campos);
+    if (!r.ok) {
+      Object.assign(c, antes);
+      desenharArea();
+      return toast("Não foi possível mover: " + (r.erro || ""), "erro", 5000);
+    }
+    if (status === "postado" && antes.status !== "postado") {
+      toast(c.link_post ? "Postado! 🎉" : "Postado! 🎉 Quando puder, cole o link do post no card.", "ok", 4500);
+    }
+  }
+
+  // ---------- Visão do mês ----------
+  function htmlMes() {
+    const lista = filtrados();
+    const ano = CAL.mes.getFullYear(), mes = CAL.mes.getMonth();
+    const dias = new Date(ano, mes + 1, 0).getDate();
+    const inicio = new Date(ano, mes, 1).getDay(); // 0 = domingo
+    const prefixo = `${ano}-${pad2(mes + 1)}`;
+    const ordemK = { gravar: 0, editar: 1, postar: 2 };
+    const porDia = {};
+    lista.forEach((c) => prazos(c).forEach((p) => { (porDia[p.data] = porDia[p.data] || []).push({ c, p }); }));
+    Object.values(porDia).forEach((evs) => evs.sort((a, b) => ordemK[a.p.k] - ordemK[b.p.k]));
+    const evento = ({ c, p }) => `<button type="button" class="evento cor-${p.cor}" data-abrir="${esc(c.id)}" title="${esc(p.t + ": " + c.titulo)}"><i></i><b>${p.t}</b> ${esc(c.titulo)}</button>`;
+
+    let celulas = "";
+    for (let i = 0; i < inicio; i++) celulas += `<div class="dia fora"></div>`;
+    for (let d = 1; d <= dias; d++) {
+      const iso = `${prefixo}-${pad2(d)}`;
+      const evs = porDia[iso] || [];
+      celulas += `<div class="dia ${iso === hoje() ? "hoje" : ""}"><span class="dia-num">${d}</span>
+        ${evs.slice(0, 4).map(evento).join("")}${evs.length > 4 ? `<span class="mais">+${evs.length - 4} no dia</span>` : ""}</div>`;
+    }
+
+    // No celular a grade vira uma agenda (só os dias com algo marcado)
+    const diasCom = Object.keys(porDia).filter((k) => k.startsWith(prefixo)).sort();
+    const agenda = diasCom.length
+      ? diasCom.map((k) => {
+        const nome = new Date(k + "T12:00:00").toLocaleDateString("pt-BR", { weekday: "long", day: "numeric", month: "long" });
+        return `<div class="agenda-dia ${k === hoje() ? "hoje" : ""}"><h4>${esc(nome.charAt(0).toUpperCase() + nome.slice(1))}</h4>${porDia[k].map(evento).join("")}</div>`;
+      }).join("")
+      : `<p class="muted">Nada marcado neste mês.</p>`;
+    const semData = lista.filter((c) => c.status !== "postado" && !prazos(c).length);
+    const titulo = new Date(ano, mes, 1).toLocaleDateString("pt-BR", { month: "long", year: "numeric" });
+
+    return `
+      <div class="mes-nav">
+        <button type="button" class="btn-icone" data-mes="-1" aria-label="Mês anterior">${ICON.voltar}</button>
+        <h2>${esc(titulo.charAt(0).toUpperCase() + titulo.slice(1))}</h2>
+        <button type="button" class="btn-icone" data-mes="1" aria-label="Próximo mês">${ICON.avancar}</button>
+        <button type="button" class="btn btn-pequeno" data-mes="0">Hoje</button>
+        <span class="espaco"></span>
+        <span class="legenda"><span class="prazo cor-verde"><i></i>Feito</span><span class="prazo cor-amarelo"><i></i>A fazer</span><span class="prazo cor-vermelho"><i></i>Atrasado</span></span>
+      </div>
+      <div class="mes-grade">${["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"].map((d) => `<div class="dia-semana">${d}</div>`).join("")}${celulas}</div>
+      <div class="agenda">${agenda}</div>
+      ${semData.length ? `<h3 class="secao-titulo">Sem data definida</h3><div class="sem-data">${semData.map((c) => `<button type="button" class="evento cor-neutro" data-abrir="${esc(c.id)}"><i></i>${esc(c.titulo)}</button>`).join("")}</div>` : ""}`;
+  }
+
+  // ---------- Desempenho e Ideias (fase 2) ----------
+  function telaFase2(sub) {
+    const info = sub === "desempenho"
+      ? { t: "Desempenho", i: ICON.grafico, p: "Aqui vão aparecer os resultados dos seus posts (curtidas, comentários, alcance, salvamentos e compartilhamentos) e a área \"O que está funcionando\", que compara tipos, categorias e etiquetas pra te dar ideias do que postar." }
+      : { t: "Ideias de conteúdo", i: ICON.chat, p: "Aqui vão aparecer as perguntas que as pessoas fazem nos comentários dos seus posts e o seu banco de ideias. Com um clique, uma ideia vira um card no Quadro." };
+    $("#cal-conteudo").innerHTML = `<div class="cartao vazio em-breve">
+      <div class="icone-grande">${info.i}</div><h2>${info.t}</h2><p>${info.p}</p><span class="selo off">Chega na fase 2</span></div>`;
+  }
+
+  // ---------- Reduz a imagem antes de enviar (miniatura leve) ----------
+  async function reduzirImagem(arquivo, max = 720) {
+    const url = URL.createObjectURL(arquivo);
+    try {
+      const img = await new Promise((ok, falha) => { const i = new Image(); i.onload = () => ok(i); i.onerror = falha; i.src = url; });
+      const escala = Math.min(1, max / Math.max(img.width, img.height));
+      const cv = document.createElement("canvas");
+      cv.width = Math.round(img.width * escala);
+      cv.height = Math.round(img.height * escala);
+      cv.getContext("2d").drawImage(img, 0, 0, cv.width, cv.height);
+      return await new Promise((ok) => cv.toBlob(ok, "image/jpeg", 0.82));
+    } finally {
+      URL.revokeObjectURL(url);
+    }
+  }
+
+  // ---------- Ficha do conteúdo (criar e editar) ----------
+  function abrirConteudo(c, padrao = {}) {
+    const novo = !c;
+    const ed = {
+      titulo: "", status: "criar", tipo: "reels", categoria: "pessoal", marca: "", gravado: false, editado: false,
+      ...(c || {}), ...padrao,
+    };
+    ed.etiquetas = [...(ed.etiquetas || [])];
+    ed.links = (ed.links || []).map((l) => ({ rotulo: l.rotulo || "", url: l.url || "" }));
+    let mediaId = ed.ig_media_id || null;
+    let novaMini = null;                       // imagem nova (já reduzida)
+    let removerMini = false;
+    let miniPreview = (ed.miniatura_path && CAL.urls[ed.miniatura_path]) || "";
+    let sujo = false;
+
+    const opcoes = (mapa, atual) => Object.entries(mapa).map(([v, t]) => `<option value="${v}" ${atual === v ? "selected" : ""}>${t}</option>`).join("");
+    const miniHtml = () => miniPreview ? `<img src="${esc(miniPreview)}" alt="Miniatura do post">` : `<span class="muted">${ICON.arquivo} Sem imagem</span>`;
+    const linksHtml = () => ed.links.length
+      ? ed.links.map((l, i) => `<div class="link-linha">
+          <input type="text" data-l="${i}" data-c="rotulo" value="${esc(l.rotulo)}" placeholder="Ex: Vídeo bruto" aria-label="Nome do link ${i + 1}">
+          <input type="url" data-l="${i}" data-c="url" value="${esc(l.url)}" placeholder="https://..." aria-label="Endereço do link ${i + 1}">
+          <button type="button" class="btn-icone" data-link-abrir="${i}" aria-label="Abrir link ${i + 1}" title="Abrir">${ICON.link}</button>
+          <button type="button" class="btn-icone" data-link-del="${i}" aria-label="Remover link ${i + 1}" title="Remover">${ICON.x}</button>
+        </div>`).join("")
+      : `<p class="muted" style="font-size:13px;margin:0 0 6px">Nenhum link ainda.</p>`;
+    const tagsHtml = () => ed.etiquetas.map((t, i) => `<span class="chip">${esc(t)}<button type="button" data-tag-del="${i}" aria-label="Remover ${esc(t)}">×</button></span>`).join("");
+    const contaLegenda = () => {
+      const t = ($("#ce-legenda") || {}).value || "";
+      const tags = (t.match(/#[\p{L}\p{N}_]+/gu) || []).length;
+      const el = $("#ce-leg-cont");
+      if (el) { el.textContent = `${t.length}/2200 · ${tags} hashtag${tags === 1 ? "" : "s"}`; el.classList.toggle("cheio", t.length > 2200 || tags > 30); }
+    };
+
+    abrirModal(`
+      <div class="modal-cab"><h2>${novo ? "Novo conteúdo" : "Editar conteúdo"}</h2><button class="btn-icone" data-fechar aria-label="Fechar">${ICON.x}</button></div>
+      <label class="campo"><span class="rotulo">Título</span>
+        <input type="text" id="ce-titulo" value="${esc(ed.titulo)}" placeholder="Ex: Rotina de skincare da manhã" maxlength="120"></label>
+      <div class="grade grade-3">
+        <label class="campo"><span class="rotulo">Tipo</span><select id="ce-tipo">${opcoes(TIPOS, ed.tipo)}</select></label>
+        <label class="campo"><span class="rotulo">Categoria</span><select id="ce-categoria">${opcoes({ pessoal: "Pessoal", publi: "Publi (marca)" }, ed.categoria)}</select></label>
+        <label class="campo"><span class="rotulo">Etapa</span><select id="ce-status">${opcoes(Object.fromEntries(ETAPAS.map((e) => [e.s, e.t])), ed.status)}</select></label>
+      </div>
+      <label class="campo" id="ce-marca-campo" ${ed.categoria === "publi" ? "" : "hidden"}><span class="rotulo">Marca</span>
+        <input type="text" id="ce-marca" value="${esc(ed.marca || "")}" placeholder="Nome da marca"></label>
+
+      <span class="rotulo">Datas</span>
+      <div class="grade grade-3 ce-datas">
+        <div class="campo"><label for="ce-gravar" class="sub-rotulo">Gravar</label><input type="date" id="ce-gravar" value="${esc(ed.data_gravar || "")}">
+          <label class="check"><input type="checkbox" id="ce-gravado" ${ed.gravado ? "checked" : ""}> Gravado</label></div>
+        <div class="campo"><label for="ce-editar" class="sub-rotulo">Editar</label><input type="date" id="ce-editar" value="${esc(ed.data_editar || "")}">
+          <label class="check"><input type="checkbox" id="ce-editado" ${ed.editado ? "checked" : ""}> Editado</label></div>
+        <div class="campo"><label for="ce-postar" class="sub-rotulo">Postar</label><input type="date" id="ce-postar" value="${esc(ed.data_postagem || "")}"></div>
+      </div>
+
+      <div class="grade grade-2">
+        <div class="campo">
+          <span class="rotulo">Miniatura</span>
+          <div class="mini-caixa" id="ce-mini">${miniHtml()}</div>
+          <input type="file" id="ce-mini-arquivo" accept="image/jpeg,image/png,image/webp" hidden>
+          <div class="linha-btns">
+            <button type="button" class="btn btn-pequeno" data-mini="escolher">Escolher imagem</button>
+            <button type="button" class="btn btn-fantasma btn-pequeno" data-mini="remover" id="ce-mini-remover" ${miniPreview ? "" : "hidden"}>Remover</button>
+          </div>
+          <p class="ajuda">Só pra você reconhecer o post. A imagem é reduzida antes de enviar.</p>
+        </div>
+        <div class="campo">
+          <span class="rotulo">Links das mídias</span>
+          <div id="ce-links">${linksHtml()}</div>
+          <button type="button" class="btn btn-fantasma btn-pequeno" data-link-add>${ICON.mais} Adicionar link</button>
+          <p class="ajuda">Vídeo bruto, edição, cards do carrossel (Google Drive, Dropbox...).</p>
+        </div>
+      </div>
+
+      <div class="campo">
+        <div class="linha-topo"><label for="ce-legenda" class="rotulo">Legenda</label><span class="contador" id="ce-leg-cont"></span></div>
+        <textarea id="ce-legenda" rows="5" placeholder="Escreva a legenda do post...">${esc(ed.legenda || "")}</textarea>
+      </div>
+
+      <div class="campo">
+        <span class="rotulo">Etiquetas</span>
+        <div class="tags-box">
+          <span id="ce-tags" style="display:contents">${tagsHtml()}</span>
+          <input type="text" id="ce-tag-input" list="ce-tag-sug" placeholder="Digite e aperte Enter (ex: rotina, bastidores)" aria-label="Nova etiqueta">
+        </div>
+        <datalist id="ce-tag-sug">${etiquetasConteudo().map((t) => `<option value="${esc(t)}">`).join("")}</datalist>
+      </div>
+
+      <div class="campo">
+        <label for="ce-link-post" class="rotulo">Link do post publicado</label>
+        <div class="linha">
+          <input type="url" id="ce-link-post" value="${esc(ed.link_post || "")}" placeholder="https://www.instagram.com/p/...">
+          <button type="button" class="btn btn-pequeno" data-escolher-post>Escolher dos meus posts</button>
+        </div>
+        <div id="ce-posts" hidden></div>
+        <p class="ajuda">Na fase 2, o painel usa esse link pra trazer curtidas, alcance e salvamentos.</p>
+      </div>
+
+      <label class="campo"><span class="rotulo">Anotações</span>
+        <textarea id="ce-notas" rows="3" placeholder="Roteiro, referências, combinados com a marca...">${esc(ed.notas || "")}</textarea></label>
+
+      <div class="modal-rodape" style="justify-content:space-between">
+        ${novo ? "<span></span>" : `<button type="button" class="btn btn-perigo" data-apagar>${ICON.lixo} Excluir</button>`}
+        <span style="display:flex;gap:8px"><button type="button" class="btn" data-fechar>Cancelar</button><button type="button" class="btn btn-primario" data-salvar>Salvar</button></span>
+      </div>`, aoClicar, "largo", () => !sujo || confirm("Você tem alterações não salvas. Fechar mesmo assim?"));
+
+    contaLegenda();
+    if (novo) setTimeout(() => { const t = $("#ce-titulo"); if (t) t.focus(); }, 50);
+
+    const m = $("#modal");
+    m.oninput = (e) => {
+      sujo = true;
+      const t = e.target;
+      if (t.dataset.l !== undefined) ed.links[+t.dataset.l][t.dataset.c] = t.value;
+      if (t.id === "ce-legenda") contaLegenda();
+      if (t.id === "ce-link-post") mediaId = null; // link digitado à mão: o id do post é descoberto na fase 2
+    };
+    m.onchange = async (e) => {
+      sujo = true;
+      const t = e.target;
+      if (t.id === "ce-categoria") $("#ce-marca-campo").hidden = t.value !== "publi";
+      if (t.id === "ce-mini-arquivo" && t.files[0]) {
+        try {
+          novaMini = await reduzirImagem(t.files[0]);
+          removerMini = false;
+          miniPreview = URL.createObjectURL(novaMini);
+          $("#ce-mini").innerHTML = miniHtml();
+          $("#ce-mini-remover").hidden = false;
+        } catch (_) {
+          toast("Não consegui abrir essa imagem. Use JPG, PNG ou WEBP.", "erro", 5000);
+        }
+        t.value = "";
+      }
+    };
+    m.onkeydown = (e) => {
+      if (e.target.id === "ce-tag-input" && (e.key === "Enter" || e.key === ",")) { e.preventDefault(); adicionarTag(); }
+    };
+
+    function adicionarTag() {
+      const inp = $("#ce-tag-input");
+      if (!inp || !inp.value.trim()) return;
+      inp.value.split(",").map((s) => s.trim().slice(0, 30)).filter(Boolean).forEach((t) => {
+        if (!ed.etiquetas.some((x) => x.toLowerCase() === t.toLowerCase())) ed.etiquetas.push(t);
+      });
+      inp.value = "";
+      sujo = true;
+      $("#ce-tags").innerHTML = tagsHtml();
+    }
+
+    async function aoClicar(e) {
+      const b = e.target.closest("button");
+      if (!b) return;
+      if (b.dataset.mini === "escolher") return $("#ce-mini-arquivo").click();
+      if (b.dataset.mini === "remover") {
+        novaMini = null; removerMini = true; miniPreview = ""; sujo = true;
+        $("#ce-mini").innerHTML = miniHtml(); b.hidden = true;
+        return;
+      }
+      if (b.dataset.linkAdd !== undefined) {
+        ed.links.push({ rotulo: "", url: "" }); sujo = true;
+        $("#ce-links").innerHTML = linksHtml();
+        const ult = $(`#ce-links [data-l="${ed.links.length - 1}"][data-c="rotulo"]`);
+        if (ult) ult.focus();
+        return;
+      }
+      if (b.dataset.linkDel !== undefined) { ed.links.splice(+b.dataset.linkDel, 1); sujo = true; $("#ce-links").innerHTML = linksHtml(); return; }
+      if (b.dataset.linkAbrir !== undefined) {
+        const u = (ed.links[+b.dataset.linkAbrir] || {}).url;
+        if (urlValida(u)) window.open(u.trim(), "_blank", "noopener"); else toast("Cole o link completo (começando com https://).", "erro");
+        return;
+      }
+      if (b.dataset.tagDel !== undefined) { ed.etiquetas.splice(+b.dataset.tagDel, 1); sujo = true; $("#ce-tags").innerHTML = tagsHtml(); return; }
+      if (b.dataset.escolherPost !== undefined) return escolherPost();
+      if (b.dataset.postId) {
+        $("#ce-link-post").value = b.dataset.permalink;
+        mediaId = b.dataset.postId; sujo = true;
+        $("#ce-posts").hidden = true;
+        return;
+      }
+      if (b.dataset.apagar !== undefined) {
+        if (!confirm(`Excluir "${ed.titulo || "este conteúdo"}"? Não dá pra desfazer.`)) return;
+        if (!(await api.apagarConteudo(c))) return toast("Não foi possível excluir. Tente de novo.", "erro");
+        fecharModal(); toast("Conteúdo excluído.");
+        return depoisDeSalvar();
+      }
+      if (b.dataset.salvar !== undefined) return salvar(b);
+    }
+
+    // Lista os posts publicados (ig-media) pra escolher em vez de colar o link
+    async function escolherPost() {
+      const caixa = $("#ce-posts");
+      caixa.hidden = false;
+      caixa.innerHTML = `<p class="muted" style="font-size:13px">Carregando seus posts...</p>`;
+      const r = await api.posts();
+      if (!$("#ce-posts")) return;
+      if (!r.connected || !(r.posts || []).length) {
+        caixa.innerHTML = `<p class="muted" style="font-size:13px">Não consegui listar seus posts agora${LOCAL ? " (no modo de teste local o Instagram não está conectado)" : ""}. Cole o link do post no campo acima.</p>`;
+        return;
+      }
+      caixa.innerHTML = `<div class="posts posts-mini">${r.posts.slice(0, 24).map((p) => `
+        <button type="button" class="post" data-post-id="${esc(p.id)}" data-permalink="${esc(p.permalink || "")}" title="${esc(p.caption || "")}">
+          ${p.thumb ? `<img src="${esc(p.thumb)}" alt="" loading="lazy">` : ""}<span class="leg">${esc(fmtDia(p.data))}</span>
+        </button>`).join("")}</div>`;
+    }
+
+    async function salvar(btn) {
+      adicionarTag();
+      const v = (id) => $("#" + id).value;
+      const titulo = v("ce-titulo").trim();
+      if (!titulo) { toast("Dê um título pro conteúdo.", "erro"); $("#ce-titulo").focus(); return; }
+      const linkPost = v("ce-link-post").trim();
+      if (linkPost && !urlValida(linkPost)) return toast("O link do post precisa começar com https://", "erro");
+      const links = ed.links.map((l) => ({ rotulo: l.rotulo.trim(), url: l.url.trim() })).filter((l) => l.rotulo || l.url);
+      if (links.some((l) => l.url && !urlValida(l.url))) return toast("Algum link das mídias está incompleto (precisa começar com https://).", "erro");
+
+      btn.disabled = true; btn.textContent = "Salvando...";
+      const pronto = () => { btn.disabled = false; btn.textContent = "Salvar"; };
+      const antigo = ed.miniatura_path || null;
+      let miniatura_path = removerMini ? null : antigo;
+      if (novaMini) {
+        const up = await api.enviarMiniatura(novaMini);
+        if (!up.ok) { pronto(); return toast("Não foi possível enviar a miniatura: " + (up.erro || ""), "erro", 5000); }
+        miniatura_path = up.path;
+      }
+      const status = v("ce-status");
+      const categoria = v("ce-categoria");
+      const campos = {
+        ...(novo ? {} : { id: ed.id }),
+        titulo, status, tipo: v("ce-tipo"), categoria,
+        marca: categoria === "publi" ? v("ce-marca").trim() || null : null,
+        data_gravar: v("ce-gravar") || null,
+        data_editar: v("ce-editar") || null,
+        data_postagem: v("ce-postar") || (status === "postado" ? hoje() : null),
+        gravado: $("#ce-gravado").checked,
+        editado: $("#ce-editado").checked,
+        legenda: v("ce-legenda"),
+        links, etiquetas: ed.etiquetas, miniatura_path,
+        link_post: linkPost || null,
+        ig_media_id: linkPost ? mediaId : null,
+        notas: v("ce-notas"),
+      };
+      // card novo ou que mudou de etapa vai pro fim da coluna
+      if (novo || status !== (c && c.status)) {
+        const na = CAL.lista.filter((x) => x.status === status && x.id !== ed.id);
+        campos.ordem = na.length ? Math.max(...na.map((x) => x.ordem || 0)) + 1 : 0;
+      }
+      const r = await api.salvarConteudo(campos);
+      if (!r.ok) { pronto(); return toast("Não foi possível salvar: " + (r.erro || ""), "erro", 5000); }
+      if (antigo && antigo !== miniatura_path) api.apagarMiniatura(antigo);
+      if (r.data.miniatura_path && miniPreview) CAL.urls[r.data.miniatura_path] = miniPreview;
+      sujo = false;
+      fecharModal();
+      toast(r.local ? "Salvo neste navegador (modo de teste)." : "Conteúdo salvo.", "ok");
+      depoisDeSalvar();
+    }
+  }
+
+  // Atualiza a tela atual depois de criar, editar ou excluir um conteúdo
+  async function depoisDeSalvar() {
+    if (location.hash.startsWith("#/calendario")) {
+      await carregarConteudos();
+      if (["quadro", "mes"].includes(CAL.sub)) desenharCal();
+    } else if (location.hash.startsWith("#/inicio") || !location.hash) {
+      rotear();
+    }
   }
 
   // ---------- Instagram ----------
@@ -1615,18 +2317,22 @@
   }
 
   // ---------- Modal genérico ----------
-  function abrirModal(html, aoClicar, classe = "") {
+  // "guarda": função opcional que pode impedir o fechamento (ex: alterações não salvas)
+  let modalGuarda = null;
+  function abrirModal(html, aoClicar, classe = "", guarda = null) {
     const m = $("#modal");
-    m.oninput = null; m.onkeydown = null;
+    m.oninput = null; m.onkeydown = null; m.onchange = null;
     m.innerHTML = `<div class="modal ${classe}" role="dialog" aria-modal="true">${html}</div>`;
     m.hidden = false;
+    modalGuarda = guarda;
     m.onclick = (e) => {
-      if (e.target === m || e.target.closest("[data-fechar]")) return fecharModal();
+      if (e.target === m || e.target.closest("[data-fechar]")) return tentarFecharModal();
       if (aoClicar) aoClicar(e);
     };
   }
-  function fecharModal() { const m = $("#modal"); m.hidden = true; m.innerHTML = ""; }
-  document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !$("#modal").hidden) fecharModal(); });
+  function tentarFecharModal() { if (modalGuarda && !modalGuarda()) return; fecharModal(); }
+  function fecharModal() { const m = $("#modal"); m.hidden = true; m.innerHTML = ""; modalGuarda = null; }
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !$("#modal").hidden) tentarFecharModal(); });
 
   // ---------- Seletor de posts ----------
   async function escolherPosts() {
