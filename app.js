@@ -58,6 +58,12 @@
     editar: svg('<path d="M4 20h4L19 9l-4-4L4 16z"/>'),
     voltar: svg('<path d="M15 18l-6-6 6-6"/>'),
     avancar: svg('<path d="M9 18l6-6-6-6"/>'),
+    // documentos
+    pasta: svg('<path d="M3 7.5A2.5 2.5 0 0 1 5.5 5H9l2 2.2h7.5A2.5 2.5 0 0 1 21 9.7v7.8A2.5 2.5 0 0 1 18.5 20h-13A2.5 2.5 0 0 1 3 17.5z"/>'),
+    nota: svg('<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M9 13h6M9 17h4"/>'),
+    estrela: svg('<path d="M12 3.5l2.6 5.3 5.9.9-4.3 4.1 1 5.8-5.2-2.7-5.2 2.7 1-5.8-4.3-4.1 5.9-.9z"/>'),
+    copiar: svg('<rect x="8.5" y="8.5" width="12" height="12" rx="2"/><path d="M15.5 8.5V5.5a2 2 0 0 0-2-2h-8a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h3"/>'),
+    enviarArq: svg('<path d="M12 16V4M7 9l5-5 5 5M5 20h14"/>'),
     // tipos de conteúdo
     video: svg('<rect x="2.5" y="5" width="14" height="14" rx="2.5"/><path d="M16.5 10l5-3v10l-5-3"/>'),
     foto: svg('<rect x="3" y="4" width="18" height="16" rx="2.5"/><circle cx="9" cy="10" r="2"/><path d="M21 16l-5-5-9 9"/>'),
@@ -102,6 +108,7 @@
   const CHAVE_LEADS = "teste_leads";
   const CHAVE_ENTREGAS = "teste_entregas";
   const CHAVE_CONTEUDOS = "teste_conteudos";
+  const CHAVE_DOC = { doc_pastas: "teste_doc_pastas", doc_itens: "teste_doc_itens" };
   let autosMapa = {}; // id da automação -> nome (usado na aba Leads)
 
   // Conta linhas de uma consulta (zero se falhar)
@@ -409,6 +416,103 @@
       return mapa;
     },
 
+    // ---------- Documentos ----------
+    // Devolve { pastas, itens, erro, semTabela } (semTabela = falta rodar o 07_documentos.sql)
+    async listarDocs() {
+      if (!USA_BANCO) return { pastas: store.get(CHAVE_DOC.doc_pastas, []), itens: store.get(CHAVE_DOC.doc_itens, []) };
+      try {
+        const [p, i] = await Promise.all([
+          sb.from("doc_pastas").select("*").order("ordem").order("nome"),
+          sb.from("doc_itens").select("*").order("updated_at", { ascending: false }).limit(5000),
+        ]);
+        if (p.error) throw p.error;
+        if (i.error) throw i.error;
+        return { pastas: p.data || [], itens: i.data || [] };
+      } catch (e) {
+        console.warn(e);
+        return { pastas: [], itens: [], erro: e.message, semTabela: /doc_pastas|doc_itens|PGRST205|42P01/.test(`${e.code} ${e.message}`) };
+      }
+    },
+
+    // Cria ou atualiza uma pasta (tabela "doc_pastas") ou item ("doc_itens")
+    async salvarDoc(tabela, campos) {
+      if (!USA_BANCO) {
+        const lista = store.get(CHAVE_DOC[tabela], []);
+        const agora = new Date().toISOString();
+        let item = campos.id && lista.find((x) => x.id === campos.id);
+        if (item) Object.assign(item, campos, { updated_at: agora });
+        else { item = { ordem: 0, fixado: false, ...campos, id: `teste-${tabela}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`, created_at: agora, updated_at: agora }; lista.push(item); }
+        try { localStorage.setItem(CHAVE_DOC[tabela], JSON.stringify(lista)); }
+        catch (_) { return { ok: false, erro: "o navegador não tem mais espaço no modo de teste" }; }
+        return { ok: true, data: item, local: true };
+      }
+      try {
+        const { id, ...resto } = campos;
+        delete resto.created_at; delete resto.updated_at;
+        const q = id ? sb.from(tabela).update(resto).eq("id", id) : sb.from(tabela).insert(resto);
+        const { data, error } = await q.select().single();
+        if (error) throw error;
+        return { ok: true, data };
+      } catch (e) { console.warn(e); return { ok: false, erro: e.message }; }
+    },
+
+    async apagarDocs(tabela, ids) {
+      if (!ids.length) return true;
+      if (!USA_BANCO) {
+        store.set(CHAVE_DOC[tabela], store.get(CHAVE_DOC[tabela], []).filter((x) => !ids.includes(x.id)));
+        return true;
+      }
+      try {
+        const { error } = await sb.from(tabela).delete().in("id", ids);
+        if (error) throw error;
+        return true;
+      } catch (e) { console.warn(e); return false; }
+    },
+
+    // Arquivos: pasta privada "documentos". No teste local viram dados embutidos.
+    async enviarArquivoDoc(arquivo) {
+      if (!USA_BANCO) {
+        const url = await new Promise((ok) => { const r = new FileReader(); r.onload = () => ok(r.result); r.readAsDataURL(arquivo); });
+        return { ok: true, path: url };
+      }
+      try {
+        const limpo = arquivo.name.normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^\w.\-]+/g, "_").slice(-80);
+        const path = `arquivos/${Date.now()}-${Math.random().toString(36).slice(2, 7)}-${limpo}`;
+        const { error } = await sb.storage.from("documentos").upload(path, arquivo, { contentType: arquivo.type || "application/octet-stream" });
+        if (error) throw error;
+        return { ok: true, path };
+      } catch (e) { console.warn(e); return { ok: false, erro: e.message }; }
+    },
+    async apagarArquivosDoc(paths) {
+      const remotos = paths.filter((p) => p && !p.startsWith("data:"));
+      if (!USA_BANCO || !remotos.length) return;
+      try { await sb.storage.from("documentos").remove(remotos); } catch (_) { /* ignora */ }
+    },
+    // Link temporário pra abrir um arquivo (no teste local, um link do próprio navegador)
+    async urlArquivoDoc(path) {
+      if (path.startsWith("data:")) {
+        const blob = await (await fetch(path)).blob();
+        return URL.createObjectURL(blob);
+      }
+      if (!USA_BANCO) return "";
+      const { data, error } = await sb.storage.from("documentos").createSignedUrl(path, 600);
+      if (error) throw error;
+      return data.signedUrl;
+    },
+    // Links temporários (1 hora) pras miniaturas das imagens
+    async urlsArquivosDoc(paths) {
+      const mapa = {};
+      paths.filter((p) => p && p.startsWith("data:")).forEach((p) => { mapa[p] = p; });
+      const remotos = paths.filter((p) => p && !p.startsWith("data:"));
+      if (!USA_BANCO || !remotos.length) return mapa;
+      try {
+        const { data, error } = await sb.storage.from("documentos").createSignedUrls(remotos, 3600);
+        if (error) throw error;
+        (data || []).forEach((d) => { if (d.signedUrl) mapa[d.path] = d.signedUrl; });
+      } catch (e) { console.warn(e); }
+      return mapa;
+    },
+
     // Edge Functions (só no ar, com login)
     // Sempre devolve um objeto; se falhar, vem { connected: false, erro: "motivo" }
     async funcao(nome) {
@@ -565,6 +669,7 @@
     $("#sidebar").classList.remove("aberto");
     window.scrollTo(0, 0);
     if (rota === "calendario") return telaCalendario(partes[1] || "quadro");
+    if (rota === "documentos") return telaDocumentos(partes[1] || null);
     if (rota === "instagram") return telaInstagram(partes[1] || "metricas");
     return telaInicio();
   }
@@ -597,6 +702,7 @@
         <a class="btn btn-primario" href="#/instagram/automacoes">${ICON.raio} Criar ou editar automações</a>
         <a class="btn" href="#/instagram/metricas">${ICON.grafico} Ver métricas do Instagram</a>
         <a class="btn" href="#/calendario">${ICON.calendario} Calendário</a>
+        <a class="btn" href="#/documentos">${ICON.pasta} Documentos</a>
       </div>`;
     agendaInicio();
     const c = await api.contagens();
@@ -1243,6 +1349,494 @@
     } else if (location.hash.startsWith("#/inicio") || !location.hash) {
       rotear();
     }
+  }
+
+  // ===================================================================
+  // DOCUMENTOS
+  // Pastas (com subpastas) e itens de 3 tipos: texto escrito (nota),
+  // link e arquivo. Estrela = aparece no "Acesso rápido".
+  // ===================================================================
+  const DOC = { atual: null, pastas: [], itens: [], urls: {}, urlsEm: 0, busca: "", semTabela: false, erro: "" };
+  const CORES_PASTA = { oliva: "#5c6450", terracota: "#b8633a", caramelo: "#d99a5b", carvalho: "#8a6244", salvia: "#9aa58a", cafe: "#4a423a" };
+  const LIMITE_ARQUIVO = 20 * 1024 * 1024;  // igual ao limite da pasta no Supabase
+  const LIMITE_LOCAL = 3 * 1024 * 1024;     // modo de teste: o navegador guarda pouco
+
+  const fmtTam = (b) => (b == null ? "" : b < 1048576 ? `${Math.max(1, Math.round(b / 1024))} KB` : `${(b / 1048576).toFixed(1).replace(".", ",")} MB`);
+  const ehImagem = (it) => it.tipo === "arquivo" && /^image\//.test(it.arquivo_tipo || "");
+  const extensao = (nome) => { const m = String(nome || "").match(/\.([a-z0-9]{1,5})$/i); return m ? m[1].toUpperCase() : "Arquivo"; };
+  const dominio = (u) => { try { return new URL(u).hostname.replace(/^www\./, ""); } catch (_) { return u || ""; } };
+  const pastaPorId = (id) => DOC.pastas.find((p) => p.id === id) || null;
+
+  // Pastas do topo até a pasta atual (pra trilha "Documentos › Mentora › Produtos")
+  function caminhoPasta(id) {
+    const trilha = [];
+    let p = pastaPorId(id);
+    while (p && trilha.length < 20) { trilha.unshift(p); p = pastaPorId(p.parent_id); }
+    return trilha;
+  }
+  // A pasta e todas as que estão dentro dela
+  function descendentes(id) {
+    const ids = [id];
+    for (let i = 0; i < ids.length; i++) DOC.pastas.filter((p) => p.parent_id === ids[i]).forEach((p) => ids.push(p.id));
+    return ids;
+  }
+
+  // Texto escrito com formatação simples:
+  //   ## Título   - item de lista   **negrito**   links viram clicáveis
+  //   códigos de cor como #5c6450 ganham uma amostra da cor
+  function textoFormatado(texto) {
+    const linha = (s) => esc(s)
+      .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
+      .replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank" rel="noopener">$1</a>')
+      .replace(/(^|[\s(:])#([0-9a-fA-F]{6})\b/g, '$1<span class="amostra" style="background:#$2"></span>#$2');
+    let html = "", lista = false;
+    String(texto || "").split(/\r?\n/).forEach((l) => {
+      const t = l.trim();
+      const item = t.match(/^[-*]\s+(.*)$/);
+      if (item) { if (!lista) { html += "<ul>"; lista = true; } html += `<li>${linha(item[1])}</li>`; return; }
+      if (lista) { html += "</ul>"; lista = false; }
+      const tit = t.match(/^(#{1,3})\s+(.*)$/);
+      if (tit) html += `<h${tit[1].length === 1 ? 3 : 4}>${linha(tit[2])}</h${tit[1].length === 1 ? 3 : 4}>`;
+      else if (t) html += `<p>${linha(t)}</p>`;
+    });
+    if (lista) html += "</ul>";
+    return html || `<p class="muted">Sem texto ainda.</p>`;
+  }
+  const resumoTexto = (t) => String(t || "").replace(/[#*]/g, "").replace(/\s+/g, " ").trim().slice(0, 90);
+
+  async function copiarTexto(texto) {
+    try { await navigator.clipboard.writeText(texto); }
+    catch (_) {
+      const ta = document.createElement("textarea");
+      ta.value = texto; document.body.appendChild(ta); ta.select();
+      try { document.execCommand("copy"); } finally { ta.remove(); }
+    }
+    toast("Texto copiado.", "ok");
+  }
+
+  async function carregarDocs() {
+    const r = await api.listarDocs();
+    DOC.pastas = r.pastas; DOC.itens = r.itens;
+    DOC.semTabela = !!r.semTabela;
+    DOC.erro = r.semTabela ? "" : r.erro || "";
+    if (Date.now() - DOC.urlsEm > 50 * 60 * 1000) { DOC.urls = {}; DOC.urlsEm = Date.now(); }
+    const faltam = DOC.itens.filter((i) => ehImagem(i) && i.arquivo_path && !DOC.urls[i.arquivo_path]).map((i) => i.arquivo_path);
+    if (faltam.length) Object.assign(DOC.urls, await api.urlsArquivosDoc(faltam));
+  }
+
+  async function telaDocumentos(pastaId) {
+    if (pastaId !== DOC.atual) DOC.busca = ""; // entrou em outra pasta: limpa a busca
+    DOC.atual = pastaId;
+    conteudo().innerHTML = `
+      <div class="cabecalho">
+        <div>
+          <p class="sobretitulo">Organização</p>
+          <h1>Documentos</h1>
+          <p class="muted">Tudo o que você precisa, organizado e à mão.</p>
+        </div>
+      </div>
+      <div id="doc-conteudo"><p class="muted">Carregando...</p></div>`;
+    await carregarDocs();
+    if (!$("#doc-conteudo") || DOC.atual !== pastaId) return;
+    if (pastaId && !pastaPorId(pastaId)) { location.hash = "#/documentos"; return; }
+    desenharDocs();
+  }
+
+  function desenharDocs() {
+    const alvo = $("#doc-conteudo");
+    if (!alvo) return;
+    const atual = pastaPorId(DOC.atual);
+    alvo.innerHTML = `
+      ${DOC.semTabela ? `<p class="alerta" style="margin:0 0 14px">Pra salvar seus documentos, rode o script <b>07_documentos.sql</b> no Supabase (veja o LEIA-ME).</p>` : ""}
+      ${DOC.erro ? `<p class="erro">Não foi possível carregar: ${esc(DOC.erro)}</p>` : ""}
+      <div class="doc-barra">
+        <nav class="trilha" aria-label="Você está em">
+          <a href="#/documentos">Documentos</a>${caminhoPasta(DOC.atual).map((p) => `<span aria-hidden="true">›</span><a href="#/documentos/${esc(p.id)}">${esc(p.nome)}</a>`).join("")}
+        </nav>
+        <input type="search" id="doc-busca" placeholder="Buscar em todos os documentos" value="${esc(DOC.busca)}" aria-label="Buscar documentos">
+      </div>
+      <div class="doc-acoes">
+        <button type="button" class="btn btn-pequeno" data-novo="pasta">${ICON.pasta} Nova pasta</button>
+        <button type="button" class="btn btn-pequeno" data-novo="nota">${ICON.nota} Texto</button>
+        <button type="button" class="btn btn-pequeno" data-novo="link">${ICON.link} Link</button>
+        <button type="button" class="btn btn-pequeno btn-primario" data-novo="arquivo">${ICON.enviarArq} Enviar arquivo</button>
+        <input type="file" id="doc-arquivo" multiple hidden>
+        ${atual ? `<span class="espaco"></span><button type="button" class="btn btn-fantasma btn-pequeno" data-editar-pasta="${esc(atual.id)}">${ICON.editar} Editar pasta</button>` : ""}
+      </div>
+      <div id="doc-area" class="doc-area"></div>
+      ${!DOC.atual ? `<p class="doc-espaco">${usoEspaco()}</p>` : ""}`;
+    desenharDocArea();
+
+    // (propriedades em vez de addEventListener: redesenhar não acumula eventos)
+    alvo.oninput = (e) => { if (e.target.id === "doc-busca") { DOC.busca = e.target.value; desenharDocArea(); } };
+    alvo.onchange = (e) => { if (e.target.id === "doc-arquivo" && e.target.files.length) { enviarArquivos([...e.target.files]); e.target.value = ""; } };
+    alvo.onclick = (e) => {
+      const b = e.target.closest("[data-novo],[data-editar-pasta],[data-abrir-item],[data-fixar],[data-copiar],[data-editar-item],[data-sugeridas]");
+      if (!b) return;
+      const item = (id) => DOC.itens.find((x) => x.id === id);
+      if (b.dataset.novo === "arquivo") return $("#doc-arquivo").click();
+      if (b.dataset.novo) return editarDoc(b.dataset.novo, null);
+      if (b.dataset.editarPasta) return editarDoc("pasta", pastaPorId(b.dataset.editarPasta));
+      if (b.dataset.abrirItem) return abrirItem(item(b.dataset.abrirItem));
+      if (b.dataset.fixar) return alternarFixado(item(b.dataset.fixar));
+      if (b.dataset.copiar) return copiarTexto((item(b.dataset.copiar) || {}).texto || "");
+      if (b.dataset.editarItem) { const it = item(b.dataset.editarItem); return editarDoc(it.tipo, it); }
+      if (b.dataset.sugeridas !== undefined) return criarSugeridas(b);
+    };
+    // Arrastar arquivos do computador pra dentro da pasta
+    const temArquivos = (e) => e.dataTransfer && [...e.dataTransfer.types].includes("Files");
+    alvo.ondragover = (e) => { if (temArquivos(e)) { e.preventDefault(); $("#doc-area").classList.add("soltar"); } };
+    alvo.ondragleave = (e) => { if (!alvo.contains(e.relatedTarget)) $("#doc-area").classList.remove("soltar"); };
+    alvo.ondrop = (e) => {
+      if (!temArquivos(e)) return;
+      e.preventDefault();
+      $("#doc-area").classList.remove("soltar");
+      enviarArquivos([...e.dataTransfer.files]);
+    };
+  }
+
+  function usoEspaco() {
+    const total = DOC.itens.reduce((s, i) => s + (Number(i.arquivo_tamanho) || 0), 0);
+    return `${ICON.arquivo} Arquivos usando ${fmtTam(total) || "0 KB"} de 1 GB (plano gratuito do Supabase).`;
+  }
+
+  function desenharDocArea() {
+    const area = $("#doc-area");
+    if (!area) return;
+    const b = normal(DOC.busca).trim();
+
+    // Busca: procura em tudo, de todas as pastas
+    if (b) {
+      const pastas = DOC.pastas.filter((p) => normal(p.nome).includes(b));
+      const itens = DOC.itens.filter((i) => [i.titulo, i.texto, i.arquivo_nome, i.url].some((v) => normal(v).includes(b)));
+      area.innerHTML = !pastas.length && !itens.length
+        ? `<div class="vazio" style="padding:30px 10px"><h2>Nada encontrado</h2><p>Tente outra palavra.</p></div>`
+        : `${pastas.length ? `<h2 class="secao-titulo">Pastas</h2><div class="doc-pastas">${pastas.map(htmlPasta).join("")}</div>` : ""}
+           ${itens.length ? `<h2 class="secao-titulo">Itens</h2><div class="doc-itens">${itens.map((i) => htmlItem(i, true)).join("")}</div>` : ""}`;
+      return;
+    }
+
+    const subpastas = DOC.pastas.filter((p) => (p.parent_id || null) === DOC.atual)
+      .sort((x, y) => (x.ordem || 0) - (y.ordem || 0) || x.nome.localeCompare(y.nome, "pt-BR"));
+    const itens = DOC.itens.filter((i) => (i.pasta_id || null) === DOC.atual)
+      .sort((x, y) => Number(y.fixado) - Number(x.fixado) || x.titulo.localeCompare(y.titulo, "pt-BR"));
+    const fixados = DOC.atual ? [] : DOC.itens.filter((i) => i.fixado);
+
+    if (!DOC.atual && !subpastas.length && !itens.length) {
+      area.innerHTML = `<div class="cartao vazio">
+        <div class="icone-grande">${ICON.pasta}</div>
+        <h2>Seu espaço de documentos</h2>
+        <p>Crie pastas pra sua marca, sua mentoria e o que mais precisar. Pode começar com as pastas sugeridas, já com modelos prontos.</p>
+        <button type="button" class="btn btn-primario" data-sugeridas>${ICON.mais} Criar pastas sugeridas</button>
+        <p class="ajuda" style="margin-top:12px">Minha marca (com sua identidade visual) e Mentora (Produtos, Esteira de produtos, Conceitos).</p>
+      </div>`;
+      return;
+    }
+
+    area.innerHTML = `
+      ${fixados.length ? `<h2 class="secao-titulo">${ICON.estrela} Acesso rápido</h2><div class="doc-itens">${fixados.map((i) => htmlItem(i, true)).join("")}</div>` : ""}
+      ${subpastas.length ? `<h2 class="secao-titulo">Pastas</h2><div class="doc-pastas">${subpastas.map(htmlPasta).join("")}</div>` : ""}
+      ${itens.length ? `<h2 class="secao-titulo">${DOC.atual ? "Nesta pasta" : "Fora de pastas"}</h2><div class="doc-itens">${itens.map((i) => htmlItem(i, false)).join("")}</div>` : ""}
+      ${DOC.atual && !subpastas.length && !itens.length ? `<div class="doc-vazia">${ICON.enviarArq}<p>Pasta vazia. Arraste arquivos do computador pra cá ou use os botões acima.</p></div>` : ""}`;
+  }
+
+  function htmlPasta(p) {
+    const nItens = DOC.itens.filter((i) => i.pasta_id === p.id).length;
+    const nPastas = DOC.pastas.filter((x) => x.parent_id === p.id).length;
+    const partes = [nItens ? `${nItens} ${nItens === 1 ? "item" : "itens"}` : "", nPastas ? `${nPastas} ${nPastas === 1 ? "pasta" : "pastas"}` : ""].filter(Boolean);
+    return `<a class="doc-pasta" href="#/documentos/${esc(p.id)}" style="--cor-pasta:${CORES_PASTA[p.cor] || CORES_PASTA.oliva}">
+      <span class="doc-pasta-ic">${ICON.pasta}</span>
+      <span class="doc-pasta-txt"><b>${esc(p.nome)}</b><span class="sub">${partes.join(" · ") || "vazia"}</span></span>
+    </a>`;
+  }
+
+  function htmlItem(it, mostrarPasta) {
+    const thumb = ehImagem(it) && DOC.urls[it.arquivo_path];
+    const icone = it.tipo === "nota" ? ICON.nota : it.tipo === "link" ? ICON.link : ehImagem(it) ? ICON.foto : ICON.arquivo;
+    const meta = it.tipo === "nota" ? resumoTexto(it.texto) || "Texto"
+      : it.tipo === "link" ? dominio(it.url)
+      : [extensao(it.arquivo_nome), fmtTam(it.arquivo_tamanho)].filter(Boolean).join(" · ");
+    const pasta = mostrarPasta && it.pasta_id && pastaPorId(it.pasta_id);
+    return `<article class="doc-item tipo-${it.tipo}">
+      <button type="button" class="doc-item-abrir" data-abrir-item="${esc(it.id)}" aria-label="Abrir ${esc(it.titulo)}">
+        <span class="doc-item-visual">${thumb ? `<img src="${esc(thumb)}" alt="" loading="lazy">` : icone}</span>
+        <span class="doc-item-txt">
+          <b>${esc(it.titulo)}</b>
+          <span class="sub">${esc(meta)}</span>
+          ${pasta ? `<span class="sub doc-onde">${ICON.pasta} ${esc(pasta.nome)}</span>` : ""}
+        </span>
+      </button>
+      <div class="doc-item-acoes">
+        ${it.tipo === "nota" ? `<button type="button" class="btn-icone" data-copiar="${esc(it.id)}" aria-label="Copiar texto" title="Copiar texto">${ICON.copiar}</button>` : ""}
+        <button type="button" class="btn-icone estrela ${it.fixado ? "ativa" : ""}" data-fixar="${esc(it.id)}" aria-pressed="${it.fixado ? "true" : "false"}" aria-label="${it.fixado ? "Tirar do acesso rápido" : "Colocar no acesso rápido"}" title="${it.fixado ? "Tirar do acesso rápido" : "Acesso rápido"}">${ICON.estrela}</button>
+        <button type="button" class="btn-icone" data-editar-item="${esc(it.id)}" aria-label="Editar ${esc(it.titulo)}" title="Editar">${ICON.editar}</button>
+      </div>
+    </article>`;
+  }
+
+  async function alternarFixado(it) {
+    if (!it) return;
+    it.fixado = !it.fixado;
+    desenharDocArea();
+    const r = await api.salvarDoc("doc_itens", { id: it.id, fixado: it.fixado });
+    if (!r.ok) { it.fixado = !it.fixado; desenharDocArea(); toast("Não foi possível salvar: " + (r.erro || ""), "erro"); }
+  }
+
+  // Abre: texto numa janela de leitura, link numa aba nova, arquivo com link temporário
+  async function abrirItem(it) {
+    if (!it) return;
+    if (it.tipo === "link") {
+      if (urlValida(it.url)) window.open(it.url.trim(), "_blank", "noopener");
+      else toast("Esse link está incompleto. Edite e cole o endereço completo (https://).", "erro", 5000);
+      return;
+    }
+    if (it.tipo === "arquivo") {
+      const janela = window.open("about:blank", "_blank"); // abre já (senão o navegador bloqueia)
+      try {
+        const url = await api.urlArquivoDoc(it.arquivo_path);
+        if (!url) throw new Error("arquivo indisponível no modo de teste");
+        if (janela) { janela.opener = null; janela.location.href = url; } else location.href = url;
+      } catch (e) {
+        if (janela) janela.close();
+        toast("Não foi possível abrir o arquivo: " + e.message, "erro", 5000);
+      }
+      return;
+    }
+    abrirModal(`
+      <div class="modal-cab"><h2>${esc(it.titulo)}</h2><button class="btn-icone" data-fechar aria-label="Fechar">${ICON.x}</button></div>
+      <div class="doc-leitura">${textoFormatado(it.texto)}</div>
+      <div class="modal-rodape">
+        <button type="button" class="btn" data-copiar-nota>${ICON.copiar} Copiar texto</button>
+        <button type="button" class="btn" data-editar-nota>${ICON.editar} Editar</button>
+        <button type="button" class="btn btn-primario" data-fechar>Fechar</button>
+      </div>`, (e) => {
+      if (e.target.closest("[data-copiar-nota]")) copiarTexto(it.texto || "");
+      if (e.target.closest("[data-editar-nota]")) editarDoc("nota", it);
+    }, "largo");
+  }
+
+  // Envia arquivos (do botão ou arrastados) pra pasta atual
+  async function enviarArquivos(arquivos) {
+    if (DOC.semTabela) return toast("Rode o 07_documentos.sql no Supabase antes de enviar arquivos.", "erro", 5000);
+    const limite = USA_BANCO ? LIMITE_ARQUIVO : LIMITE_LOCAL;
+    const grandes = arquivos.filter((a) => a.size > limite);
+    if (grandes.length) toast(`${grandes.map((a) => a.name).join(", ")}: passa de ${fmtTam(limite)}. Use um link do Google Drive pra esse.`, "erro", 7000);
+    const ok = arquivos.filter((a) => a.size <= limite);
+    let enviados = 0;
+    for (const [i, a] of ok.entries()) {
+      toast(`Enviando ${i + 1} de ${ok.length}: ${a.name}`, "", 60000);
+      const up = await api.enviarArquivoDoc(a);
+      if (!up.ok) { toast(`Não foi possível enviar ${a.name}: ${up.erro || ""}`, "erro", 6000); continue; }
+      const r = await api.salvarDoc("doc_itens", {
+        tipo: "arquivo", titulo: a.name.replace(/\.[^.]+$/, "").slice(0, 120) || a.name, pasta_id: DOC.atual,
+        arquivo_path: up.path, arquivo_nome: a.name, arquivo_tipo: a.type || "", arquivo_tamanho: a.size,
+      });
+      if (!r.ok) { api.apagarArquivosDoc([up.path]); toast(`Não foi possível salvar ${a.name}: ${r.erro || ""}`, "erro", 6000); continue; }
+      enviados++;
+    }
+    if (enviados) toast(enviados === 1 ? "Arquivo enviado." : `${enviados} arquivos enviados.`, "ok");
+    await carregarDocs();
+    desenharDocs();
+  }
+
+  // Opções de pasta pro seletor "Onde fica" (em árvore)
+  function opcoesPastas(selecionada, excluir = []) {
+    const linhas = [`<option value="">Fora de pastas (início)</option>`];
+    const andar = (pai, nivel) => DOC.pastas
+      .filter((p) => (p.parent_id || null) === pai && !excluir.includes(p.id))
+      .sort((x, y) => x.nome.localeCompare(y.nome, "pt-BR"))
+      .forEach((p) => {
+        linhas.push(`<option value="${esc(p.id)}" ${p.id === selecionada ? "selected" : ""}>${"   ".repeat(nivel)}${nivel ? "› " : ""}${esc(p.nome)}</option>`);
+        andar(p.id, nivel + 1);
+      });
+    andar(null, 0);
+    return linhas.join("");
+  }
+
+  // Criar e editar: pasta, texto, link ou arquivo
+  function editarDoc(tipo, existente) {
+    const novo = !existente;
+    const e0 = existente || {};
+    let sujo = false;
+    const titulos = { pasta: novo ? "Nova pasta" : "Editar pasta", nota: novo ? "Novo texto" : "Editar texto", link: novo ? "Novo link" : "Editar link", arquivo: "Editar arquivo" };
+    const ondeAtual = tipo === "pasta" ? (novo ? DOC.atual : e0.parent_id) : (novo ? DOC.atual : e0.pasta_id);
+    const excluir = tipo === "pasta" && !novo ? descendentes(e0.id) : [];
+    const corAtual = e0.cor || "oliva";
+
+    const campoOnde = `<label class="campo"><span class="rotulo">${tipo === "pasta" ? "Dentro de" : "Pasta"}</span><select id="de-onde">${opcoesPastas(ondeAtual || null, excluir)}</select></label>`;
+    const campoFixado = `<label class="check" style="margin-bottom:6px"><input type="checkbox" id="de-fixado" ${e0.fixado ? "checked" : ""}> ${ICON.estrela} Mostrar no acesso rápido</label>`;
+    let corpo = "";
+    if (tipo === "pasta") {
+      corpo = `
+        <label class="campo"><span class="rotulo">Nome</span><input type="text" id="de-titulo" value="${esc(e0.nome || "")}" placeholder="Ex: Minha marca" maxlength="80"></label>
+        <div class="campo"><span class="rotulo">Cor</span><div class="cores-pasta" role="radiogroup" aria-label="Cor da pasta">
+          ${Object.entries(CORES_PASTA).map(([k, v]) => `<label class="cor-op" title="${k}"><input type="radio" name="de-cor" value="${k}" ${k === corAtual ? "checked" : ""}><span style="background:${v}"></span></label>`).join("")}
+        </div></div>
+        ${campoOnde}`;
+    } else if (tipo === "nota") {
+      corpo = `
+        <label class="campo"><span class="rotulo">Título</span><input type="text" id="de-titulo" value="${esc(e0.titulo || "")}" placeholder="Ex: Bio do Instagram, Guia de marca" maxlength="120"></label>
+        <div class="campo"><label class="rotulo" for="de-texto">Texto</label>
+          <textarea id="de-texto" rows="14" placeholder="Escreva aqui...">${esc(e0.texto || "")}</textarea>
+          <p class="ajuda">Formatação: <code>## Título</code>, <code>- item de lista</code>, <code>**negrito**</code>. Códigos de cor como <code>#5c6450</code> mostram a amostra da cor.</p></div>
+        <div class="grade grade-2">${campoOnde}<div class="campo" style="align-self:end">${campoFixado}</div></div>`;
+    } else if (tipo === "link") {
+      corpo = `
+        <label class="campo"><span class="rotulo">Título</span><input type="text" id="de-titulo" value="${esc(e0.titulo || "")}" placeholder="Ex: Mídia kit no Canva" maxlength="120"></label>
+        <label class="campo"><span class="rotulo">Link</span><input type="url" id="de-url" value="${esc(e0.url || "")}" placeholder="https://..."></label>
+        <label class="campo"><span class="rotulo">Descrição (opcional)</span><textarea id="de-texto" rows="3" placeholder="Pra que serve, senha de acesso fica fora daqui...">${esc(e0.texto || "")}</textarea></label>
+        <div class="grade grade-2">${campoOnde}<div class="campo" style="align-self:end">${campoFixado}</div></div>`;
+    } else {
+      corpo = `
+        <p class="doc-arquivo-info">${ICON.arquivo} <b>${esc(e0.arquivo_nome || "")}</b> <span class="muted">${esc(fmtTam(e0.arquivo_tamanho))}</span>
+          <button type="button" class="btn btn-pequeno" data-abrir-este>Abrir</button></p>
+        <label class="campo"><span class="rotulo">Título</span><input type="text" id="de-titulo" value="${esc(e0.titulo || "")}" maxlength="120"></label>
+        <label class="campo"><span class="rotulo">Descrição (opcional)</span><textarea id="de-texto" rows="3" placeholder="Ex: versão aprovada pela marca em outubro">${esc(e0.texto || "")}</textarea></label>
+        <div class="grade grade-2">${campoOnde}<div class="campo" style="align-self:end">${campoFixado}</div></div>`;
+    }
+
+    abrirModal(`
+      <div class="modal-cab"><h2>${titulos[tipo]}</h2><button class="btn-icone" data-fechar aria-label="Fechar">${ICON.x}</button></div>
+      ${corpo}
+      <div class="modal-rodape" style="justify-content:space-between">
+        ${novo ? "<span></span>" : `<button type="button" class="btn btn-perigo" data-excluir>${ICON.lixo} Excluir</button>`}
+        <span style="display:flex;gap:8px"><button type="button" class="btn" data-fechar>Cancelar</button><button type="button" class="btn btn-primario" data-salvar>Salvar</button></span>
+      </div>`, aoClicar, tipo === "nota" ? "largo" : "", () => !sujo || confirm("Você tem alterações não salvas. Fechar mesmo assim?"));
+    const m = $("#modal");
+    m.oninput = () => { sujo = true; };
+    m.onchange = () => { sujo = true; };
+    setTimeout(() => { const t = $("#de-titulo"); if (t && novo) t.focus(); }, 50);
+
+    async function aoClicar(e) {
+      if (e.target.closest("[data-abrir-este]")) return abrirItem(e0);
+      if (e.target.closest("[data-excluir]")) return excluir_();
+      const btn = e.target.closest("[data-salvar]");
+      if (!btn) return;
+      const titulo = $("#de-titulo").value.trim();
+      if (!titulo) { toast(tipo === "pasta" ? "Dê um nome pra pasta." : "Dê um título.", "erro"); $("#de-titulo").focus(); return; }
+      const onde = $("#de-onde").value || null;
+      let tabela = "doc_itens", campos;
+      if (tipo === "pasta") {
+        tabela = "doc_pastas";
+        campos = { nome: titulo, parent_id: onde, cor: (m.querySelector("input[name='de-cor']:checked") || {}).value || "oliva" };
+      } else {
+        campos = { titulo, pasta_id: onde, texto: $("#de-texto").value, fixado: $("#de-fixado").checked };
+        if (novo) campos.tipo = tipo;
+        if (tipo === "link") {
+          const url = $("#de-url").value.trim();
+          if (!urlValida(url)) { toast("Cole o link completo (começando com https://).", "erro"); return; }
+          campos.url = url;
+        }
+      }
+      if (!novo) campos.id = e0.id;
+      btn.disabled = true; btn.textContent = "Salvando...";
+      const r = await api.salvarDoc(tabela, campos);
+      if (!r.ok) { btn.disabled = false; btn.textContent = "Salvar"; return toast("Não foi possível salvar: " + (r.erro || ""), "erro", 5000); }
+      sujo = false;
+      fecharModal();
+      toast(r.local ? "Salvo neste navegador (modo de teste)." : "Salvo.", "ok");
+      await carregarDocs();
+      if (tipo === "pasta" && novo) { location.hash = `#/documentos/${r.data.id}`; return; }
+      desenharDocs();
+    }
+
+    async function excluir_() {
+      if (tipo === "pasta") {
+        const ids = descendentes(e0.id);
+        const itens = DOC.itens.filter((i) => ids.includes(i.pasta_id));
+        const aviso = itens.length || ids.length > 1
+          ? `Excluir a pasta "${e0.nome}" e TUDO que tem dentro (${itens.length} ${itens.length === 1 ? "item" : "itens"}${ids.length > 1 ? ` e ${ids.length - 1} ${ids.length === 2 ? "subpasta" : "subpastas"}` : ""})? Não dá pra desfazer.`
+          : `Excluir a pasta "${e0.nome}"?`;
+        if (!confirm(aviso)) return;
+        await api.apagarArquivosDoc(itens.map((i) => i.arquivo_path));
+        const ok = await api.apagarDocs("doc_itens", itens.map((i) => i.id)) && await api.apagarDocs("doc_pastas", ids);
+        if (!ok) return toast("Não foi possível excluir. Tente de novo.", "erro");
+        sujo = false; fecharModal(); toast("Pasta excluída.");
+        await carregarDocs();
+        location.hash = e0.parent_id ? `#/documentos/${e0.parent_id}` : "#/documentos";
+        if (DOC.atual === (e0.parent_id || null)) desenharDocs();
+        return;
+      }
+      if (!confirm(`Excluir "${e0.titulo}"? Não dá pra desfazer.`)) return;
+      if (e0.arquivo_path) await api.apagarArquivosDoc([e0.arquivo_path]);
+      if (!(await api.apagarDocs("doc_itens", [e0.id]))) return toast("Não foi possível excluir. Tente de novo.", "erro");
+      sujo = false; fecharModal(); toast("Excluído.");
+      await carregarDocs();
+      desenharDocs();
+    }
+  }
+
+  // Pastas sugeridas, com modelos prontos pra preencher
+  async function criarSugeridas(btn) {
+    if (DOC.semTabela) return toast("Rode o 07_documentos.sql no Supabase antes.", "erro", 5000);
+    btn.disabled = true; btn.textContent = "Criando...";
+    const pasta = async (nome, cor, parent_id, ordem) => (await api.salvarDoc("doc_pastas", { nome, cor, parent_id, ordem })).data;
+    const nota = (titulo, pasta_id, texto, fixado = false) => api.salvarDoc("doc_itens", { tipo: "nota", titulo, pasta_id, texto, fixado });
+    try {
+      const marca = await pasta("Minha marca", "terracota", null, 0);
+      await nota("Identidade visual", marca.id, [
+        "## Cores",
+        "- Cortina (fundo): #f4f0e8",
+        "- Areia: #d8c8ae",
+        "- Oliva (cor principal): #5c6450",
+        "- Terracota (detalhes): #b8633a",
+        "- Caramelo: #d99a5b",
+        "- Carvalho: #8a6244",
+        "- Café (textos): #1f1c19",
+        "",
+        "## Fontes",
+        "- Títulos: **Cormorant Garamond**",
+        "- Textos: **Jost**",
+        "",
+        "## Logo",
+        "Máscaras do teatro (comédia e tragédia) dentro de uma câmera. Envie os arquivos do logo pra esta pasta.",
+        "",
+        "## Links",
+        "- Portfólio: https://carolinecostaugc.github.io/",
+      ].join("\n"), true);
+      await nota("Guia de marca", marca.id, [
+        "## Quem eu sou",
+        "Escreva aqui em poucas linhas.",
+        "",
+        "## Tom de voz",
+        "- ",
+        "",
+        "## Pra quem eu falo",
+        "- ",
+        "",
+        "## Palavras que uso",
+        "- ",
+        "",
+        "## Palavras que evito",
+        "- ",
+      ].join("\n"));
+      const mentora = await pasta("Mentora", "oliva", null, 1);
+      await pasta("Produtos", "caramelo", mentora.id, 0);
+      const esteira = await pasta("Esteira de produtos", "carvalho", mentora.id, 1);
+      await pasta("Conceitos", "salvia", mentora.id, 2);
+      await nota("Esteira de produtos", esteira.id, [
+        "## Isca gratuita",
+        "- Produto:",
+        "- Objetivo:",
+        "",
+        "## Produto de entrada",
+        "- Produto:",
+        "- Preço:",
+        "",
+        "## Produto principal",
+        "- Produto:",
+        "- Preço:",
+        "",
+        "## Produto premium",
+        "- Produto:",
+        "- Preço:",
+      ].join("\n"));
+      toast("Pastas criadas. Agora é só preencher.", "ok");
+    } catch (e) {
+      toast("Não foi possível criar todas as pastas: " + e.message, "erro", 5000);
+    }
+    await carregarDocs();
+    desenharDocs();
   }
 
   // ---------- Instagram ----------

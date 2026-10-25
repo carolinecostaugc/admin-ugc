@@ -528,6 +528,80 @@ input[type="date"]:focus { outline: none; border-color: var(--destaque); box-sha
 .agenda-inicio .oque { flex: 1; min-width: 0; font-size: 14.5px; }
 .agenda-inicio .sub { color: var(--texto-2); font-size: 13px; }
 
+/* ---------------- Documentos ---------------- */
+.doc-barra { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin-bottom: 14px; }
+.doc-barra input[type="search"] { flex: 0 1 320px; margin-left: auto; }
+.trilha { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-family: var(--serif); font-size: 1.35rem; font-weight: 600; }
+.trilha a { color: var(--texto-2); text-decoration: none; }
+.trilha a:last-child { color: var(--texto); }
+.trilha a:hover { color: var(--destaque); text-decoration: underline; }
+.trilha span { color: var(--borda-forte); }
+.doc-acoes { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 6px; }
+.doc-acoes .espaco { flex: 1; }
+.doc-area { border-radius: var(--raio-g); transition: background .15s, outline-color .15s; outline: 2px dashed transparent; outline-offset: 6px; min-height: 120px; }
+.doc-area.soltar { background: var(--destaque-suave); outline-color: var(--destaque); }
+.doc-area .secao-titulo { display: flex; align-items: center; gap: 8px; }
+.doc-area .secao-titulo svg { color: var(--caramelo); }
+
+.doc-pastas { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 12px; }
+.doc-pasta {
+  display: flex; align-items: center; gap: 12px; padding: 14px 16px; background: var(--superficie);
+  border: 1px solid var(--borda); border-radius: 14px; box-shadow: var(--sombra); color: var(--texto); text-decoration: none;
+  transition: transform .15s, box-shadow .15s;
+}
+.doc-pasta:hover { transform: translateY(-1px); box-shadow: var(--sombra-g); }
+.doc-pasta:focus-visible { outline: 2px solid var(--destaque); outline-offset: 2px; }
+.doc-pasta-ic { width: 42px; height: 42px; border-radius: 12px; display: grid; place-items: center; flex-shrink: 0;
+  background: color-mix(in srgb, var(--cor-pasta) 16%, transparent); color: var(--cor-pasta); }
+.doc-pasta-ic svg { width: 22px; height: 22px; fill: color-mix(in srgb, var(--cor-pasta) 25%, transparent); }
+.doc-pasta-txt { display: flex; flex-direction: column; min-width: 0; }
+.doc-pasta-txt b { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.doc-pasta-txt .sub, .doc-item-txt .sub { font-size: 12.5px; color: var(--texto-2); }
+
+.doc-itens { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(280px, 100%), 1fr)); gap: 10px; }
+.doc-item { display: flex; align-items: center; background: var(--superficie); border: 1px solid var(--borda); border-radius: 14px; box-shadow: var(--sombra); min-width: 0; }
+.doc-item:hover { border-color: var(--borda-forte); }
+.doc-item-abrir { flex: 1; min-width: 0; display: flex; align-items: center; gap: 12px; padding: 10px 6px 10px 10px; background: none; border: 0; font: inherit; color: inherit; text-align: left; cursor: pointer; border-radius: 14px; }
+.doc-item-abrir:focus-visible { outline: 2px solid var(--destaque); outline-offset: -2px; }
+.doc-item-visual { width: 48px; height: 48px; border-radius: 10px; flex-shrink: 0; display: grid; place-items: center; overflow: hidden; background: var(--cortina-2); color: var(--cafe-2); }
+.doc-item.tipo-nota .doc-item-visual { background: #efe3cf; color: #7a5212; }
+.doc-item.tipo-link .doc-item-visual { background: #e3e7d8; color: var(--oliva-parede); }
+.doc-item-visual img { width: 100%; height: 100%; object-fit: cover; }
+.doc-item-txt { display: flex; flex-direction: column; min-width: 0; }
+.doc-item-txt b { font-weight: 600; font-size: 14.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.doc-item-txt .sub { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.doc-onde { display: inline-flex; align-items: center; gap: 4px; }
+.doc-onde svg { width: 12px; height: 12px; }
+.doc-item-acoes { display: flex; padding-right: 6px; }
+.doc-item-acoes .btn-icone { width: 32px; height: 32px; }
+.btn-icone.estrela.ativa { color: var(--caramelo); }
+.btn-icone.estrela.ativa svg { fill: var(--caramelo); }
+.doc-vazia { display: flex; flex-direction: column; align-items: center; gap: 6px; text-align: center; color: var(--texto-2); padding: 40px 16px; border: 1px dashed var(--borda-forte); border-radius: var(--raio-g); margin-top: 16px; }
+.doc-vazia svg { width: 28px; height: 28px; }
+.doc-espaco { display: flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--texto-2); margin-top: 24px; }
+.doc-espaco svg { width: 14px; height: 14px; }
+
+/* Leitura de texto */
+.doc-leitura { font-size: 15px; line-height: 1.7; max-height: 60vh; overflow-y: auto; padding-right: 4px; }
+.doc-leitura h3 { font-family: var(--serif); font-size: 1.4rem; font-weight: 600; margin: 18px 0 6px; }
+.doc-leitura h4 { font-family: var(--serif); font-size: 1.2rem; font-weight: 600; margin: 16px 0 4px; }
+.doc-leitura h3:first-child, .doc-leitura h4:first-child { margin-top: 0; }
+.doc-leitura p { margin: 0 0 10px; }
+.doc-leitura ul { margin: 0 0 10px; padding-left: 20px; }
+.doc-leitura li::marker { color: var(--terracota); }
+.amostra { display: inline-block; width: 14px; height: 14px; border-radius: 4px; border: 1px solid rgba(31, 28, 25, .2); vertical-align: -2px; margin-right: 5px; }
+code { font-family: ui-monospace, Consolas, monospace; font-size: .92em; background: var(--cortina-2); padding: 1px 5px; border-radius: 5px; }
+
+/* Ficha de pasta/item */
+.cores-pasta { display: flex; gap: 10px; flex-wrap: wrap; }
+.cor-op { cursor: pointer; }
+.cor-op input { position: absolute; opacity: 0; }
+.cor-op span { display: block; width: 32px; height: 32px; border-radius: 50%; border: 3px solid var(--superficie); box-shadow: 0 0 0 1px var(--borda-forte); }
+.cor-op input:checked + span { box-shadow: 0 0 0 2px var(--cafe); }
+.cor-op input:focus-visible + span { outline: 2px solid var(--destaque); outline-offset: 3px; }
+.doc-arquivo-info { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; background: var(--superficie-2); padding: 10px 12px; border-radius: 12px; margin: 0 0 16px; font-size: 14px; }
+.doc-arquivo-info .btn { margin-left: auto; }
+
 /* =====================================================================
    IDENTIDADE CAROLINE COSTA
    Acabamento da marca por cima do sistema de design.
@@ -635,6 +709,10 @@ h1, h2, .kpi .valor, .marca-nome { font-variant-numeric: lining-nums tabular-num
   .link-linha { grid-template-columns: minmax(0, 1fr) auto auto; }
   .link-linha input[data-c="rotulo"] { grid-column: 1 / -1; }
   .agenda-inicio .quando { width: 70px; }
+  .doc-barra input[type="search"] { flex: 1 1 100%; margin-left: 0; }
+  .doc-pastas { grid-template-columns: 1fr 1fr; }
+  .doc-pasta { padding: 12px; gap: 10px; }
+  .doc-pasta-ic { width: 36px; height: 36px; }
   .ferramentas select { flex: 1 1 40%; }
   .ferramentas .btn { flex: 1 1 100%; }
   .historico .quando { width: 92px; }

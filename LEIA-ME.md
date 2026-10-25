@@ -40,6 +40,8 @@ Instagram. Os passos abaixo são pra colocar no ar de verdade.
       rode depois do `04_agendamento.sql`, do passo 5)
    6. `supabase/sql/06_calendario.sql` (área Calendário: tabela dos conteúdos e a pasta
       privada das miniaturas)
+   7. `supabase/sql/07_documentos.sql` (área Documentos: pastas, textos, links e a pasta
+      privada dos arquivos, até 20 MB cada)
 
    Confira se aparece "Success". Se der erro, o Supabase desfaz o script inteiro e as tabelas
    não são criadas (o painel continua abrindo, mas com tudo zerado e sem salvar).
