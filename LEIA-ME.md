@@ -42,6 +42,8 @@ Instagram. Os passos abaixo são pra colocar no ar de verdade.
       privada das miniaturas)
    7. `supabase/sql/07_documentos.sql` (área Documentos: pastas, textos, links e a pasta
       privada dos arquivos, até 20 MB cada)
+   8. `supabase/sql/08_ugc.sql` (área UGC: marcas, propostas da prospecção e a pasta
+      privada dos contratos)
 
    Confira se aparece "Success". Se der erro, o Supabase desfaz o script inteiro e as tabelas
    não são criadas (o painel continua abrindo, mas com tudo zerado e sem salvar).

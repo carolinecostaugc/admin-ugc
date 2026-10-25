@@ -58,6 +58,12 @@
     editar: svg('<path d="M4 20h4L19 9l-4-4L4 16z"/>'),
     voltar: svg('<path d="M15 18l-6-6 6-6"/>'),
     avancar: svg('<path d="M9 18l6-6-6-6"/>'),
+    // UGC (claquete) e contato
+    ugc: svg('<path d="M3.5 10h17v9a1.5 1.5 0 0 1-1.5 1.5H5A1.5 1.5 0 0 1 3.5 19z"/><path d="M3.5 10 4.6 5.6a1.5 1.5 0 0 1 1.8-1.1l13 3.2-.9 2.3M8.5 5.4l1.6 3.6M13.5 6.6l1.6 3.4"/>'),
+    email: svg('<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3.5 6.5 12 13l8.5-6.5"/>'),
+    whatsapp: svg('<path d="M20.5 11.6a8.5 8.5 0 0 1-12.6 7.4L3.5 20.5l1.5-4.3A8.5 8.5 0 1 1 20.5 11.6z"/><path d="M9 8.5c0 3.5 3 6.5 6.5 6.5l1.2-1.6-2-1-1 1a5 5 0 0 1-3-3l1-1-1-2z"/>'),
+    formulario: svg('<rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 8h8M8 12h8M8 16h5"/>'),
+    outro: svg('<circle cx="6" cy="12" r="1.3"/><circle cx="12" cy="12" r="1.3"/><circle cx="18" cy="12" r="1.3"/>'),
     // documentos
     pasta: svg('<path d="M3 7.5A2.5 2.5 0 0 1 5.5 5H9l2 2.2h7.5A2.5 2.5 0 0 1 21 9.7v7.8A2.5 2.5 0 0 1 18.5 20h-13A2.5 2.5 0 0 1 3 17.5z"/>'),
     nota: svg('<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M9 13h6M9 17h4"/>'),
@@ -416,6 +422,82 @@
       return mapa;
     },
 
+    // ---------- Genérico (usado pela área UGC) ----------
+    // listar devolve { rows, erro, semTabela }. No teste local, tudo fica no navegador.
+    async listar(tabela, ordem = "created_at") {
+      if (!USA_BANCO) return { rows: store.get(`teste_${tabela}`, []) };
+      try {
+        const { data, error } = await sb.from(tabela).select("*").order(ordem, { ascending: true }).limit(5000);
+        if (error) throw error;
+        return { rows: data || [] };
+      } catch (e) {
+        console.warn(e);
+        return { rows: [], erro: e.message, semTabela: new RegExp(`${tabela}|PGRST205|42P01`).test(`${e.code} ${e.message}`) };
+      }
+    },
+    async salvar(tabela, campos) {
+      if (!USA_BANCO) {
+        const chave = `teste_${tabela}`;
+        const lista = store.get(chave, []);
+        const agora = new Date().toISOString();
+        let item = campos.id && lista.find((x) => x.id === campos.id);
+        if (item) Object.assign(item, campos, { updated_at: agora });
+        else { item = { ...campos, id: `teste-${tabela}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`, created_at: agora, updated_at: agora }; lista.push(item); }
+        try { localStorage.setItem(chave, JSON.stringify(lista)); }
+        catch (_) { return { ok: false, erro: "o navegador não tem mais espaço no modo de teste" }; }
+        return { ok: true, data: item, local: true };
+      }
+      try {
+        const { id, ...resto } = campos;
+        delete resto.created_at; delete resto.updated_at;
+        const q = id ? sb.from(tabela).update(resto).eq("id", id) : sb.from(tabela).insert(resto);
+        const { data, error } = await q.select().single();
+        if (error) throw error;
+        return { ok: true, data };
+      } catch (e) {
+        console.warn(e);
+        return { ok: false, erro: e.code === "23505" ? "já existe um cadastro com esse nome" : e.message };
+      }
+    },
+    async apagar(tabela, ids) {
+      if (!ids.length) return true;
+      if (!USA_BANCO) {
+        store.set(`teste_${tabela}`, store.get(`teste_${tabela}`, []).filter((x) => !ids.includes(x.id)));
+        return true;
+      }
+      try {
+        const { error } = await sb.from(tabela).delete().in("id", ids);
+        if (error) throw error;
+        return true;
+      } catch (e) { console.warn(e); return false; }
+    },
+    // Arquivos numa pasta privada do Storage (bucket). No teste local viram dados embutidos.
+    async enviarArquivo(bucket, arquivo) {
+      if (!USA_BANCO) {
+        const url = await new Promise((ok) => { const r = new FileReader(); r.onload = () => ok(r.result); r.readAsDataURL(arquivo); });
+        return { ok: true, path: url };
+      }
+      try {
+        const limpo = arquivo.name.normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^\w.\-]+/g, "_").slice(-80);
+        const path = `arquivos/${Date.now()}-${Math.random().toString(36).slice(2, 7)}-${limpo}`;
+        const { error } = await sb.storage.from(bucket).upload(path, arquivo, { contentType: arquivo.type || "application/octet-stream" });
+        if (error) throw error;
+        return { ok: true, path };
+      } catch (e) { console.warn(e); return { ok: false, erro: e.message }; }
+    },
+    async urlArquivo(bucket, path) {
+      if (path.startsWith("data:")) return URL.createObjectURL(await (await fetch(path)).blob());
+      if (!USA_BANCO) return "";
+      const { data, error } = await sb.storage.from(bucket).createSignedUrl(path, 600);
+      if (error) throw error;
+      return data.signedUrl;
+    },
+    async apagarArquivos(bucket, paths) {
+      const remotos = paths.filter((p) => p && !p.startsWith("data:"));
+      if (!USA_BANCO || !remotos.length) return;
+      try { await sb.storage.from(bucket).remove(remotos); } catch (_) { /* ignora */ }
+    },
+
     // ---------- Documentos ----------
     // Devolve { pastas, itens, erro, semTabela } (semTabela = falta rodar o 07_documentos.sql)
     async listarDocs() {
@@ -670,6 +752,7 @@
     window.scrollTo(0, 0);
     if (rota === "calendario") return telaCalendario(partes[1] || "quadro");
     if (rota === "documentos") return telaDocumentos(partes[1] || null);
+    if (rota === "ugc") return telaUgc(partes[1] || "prospeccao");
     if (rota === "instagram") return telaInstagram(partes[1] || "metricas");
     return telaInicio();
   }
@@ -1404,14 +1487,14 @@
   }
   const resumoTexto = (t) => String(t || "").replace(/[#*]/g, "").replace(/\s+/g, " ").trim().slice(0, 90);
 
-  async function copiarTexto(texto) {
+  async function copiarTexto(texto, aviso = "Texto copiado.") {
     try { await navigator.clipboard.writeText(texto); }
     catch (_) {
       const ta = document.createElement("textarea");
       ta.value = texto; document.body.appendChild(ta); ta.select();
       try { document.execCommand("copy"); } finally { ta.remove(); }
     }
-    toast("Texto copiado.", "ok");
+    toast(aviso, "ok");
   }
 
   async function carregarDocs() {
@@ -1837,6 +1920,775 @@
     }
     await carregarDocs();
     desenharDocs();
+  }
+
+  // ===================================================================
+  // UGC: Prospecção (CRM de propostas) e Marcas
+  // Uma proposta sempre aponta pra uma marca. Ao cadastrar proposta pra
+  // uma marca nova, a marca é criada sozinha com os dados do responsável.
+  // ===================================================================
+  const ETAPAS_P = [
+    { s: "enviar", t: "Para enviar" },
+    { s: "enviada", t: "Enviada" },
+    { s: "respondeu", t: "Respondeu" },
+    { s: "negociacao", t: "Em negociação" },
+    { s: "aprovado", t: "Aprovado" },
+    { s: "nao_deu", t: "Não deu" },
+  ];
+  const ETAPA_P = Object.fromEntries(ETAPAS_P.map((e, i) => [e.s, { ...e, i }]));
+  const CANAIS_P = { email: "E-mail", whatsapp: "WhatsApp", instagram: "Instagram (DM)", formulario: "Formulário", outro: "Outro" };
+  const RESPONDEU = ["respondeu", "negociacao", "aprovado"]; // contam como "a marca respondeu"
+  const ABERTAS = ["enviada", "respondeu", "negociacao"];   // ainda pedem follow-up
+  const UGC = {
+    sub: "prospeccao", vista: "quadro", marcas: [], propostas: [], busca: "", canal: "",
+    buscaM: "", soParceiras: false, ordem: "data_envio", asc: false,
+    semTabela: false, erro: "", arrastando: null, soltou: false,
+  };
+
+  const fmtReal = (v) => (v == null || v === "" ? "" : Number(v).toLocaleString("pt-BR", { style: "currency", currency: "BRL" }));
+  const fmtDataCurta = (iso) => (iso ? new Date(String(iso).slice(0, 10) + "T12:00:00").toLocaleDateString("pt-BR") : "");
+  // "R$ 1.200,50" -> 1200.5 ; "950" -> 950 ; "1.200" -> 1200
+  function lerValor(txt) {
+    let s = String(txt || "").replace(/[^\d,.]/g, "");
+    if (!s) return null;
+    if (s.includes(",")) s = s.replace(/\./g, "").replace(",", ".");
+    else if (/^\d{1,3}(\.\d{3})+$/.test(s)) s = s.replace(/\./g, "");
+    const n = Number(s);
+    return isFinite(n) ? Math.round(n * 100) / 100 : null;
+  }
+  const marcaDe = (p) => (p && p.marca_id && UGC.marcas.find((m) => m.id === p.marca_id)) || null;
+  const nomeMarca = (p) => (marcaDe(p) || {}).nome || p.marca_nome || "Sem marca";
+  const acharMarcaPorNome = (nome) => UGC.marcas.find((m) => normal(m.nome).trim() === normal(nome).trim()) || null;
+
+  // Botões pra falar com a marca (e-mail, WhatsApp, Instagram, site)
+  function linksContato(m) {
+    if (!m) return [];
+    const out = [];
+    if (m.email && /^\S+@\S+\.\S+$/.test(m.email.trim())) out.push({ t: "E-mail", url: `mailto:${m.email.trim()}`, ic: ICON.email });
+    const tel = String(m.telefone || "").replace(/\D/g, "");
+    if (tel.length >= 10) out.push({ t: "WhatsApp", url: `https://wa.me/${tel.length <= 11 ? "55" + tel : tel}`, ic: ICON.whatsapp });
+    const ig = String(m.instagram || "").trim().replace(/^https?:\/\/(www\.)?instagram\.com\//i, "").replace(/^@/, "").replace(/[/?].*$/, "");
+    if (/^[\w.]{1,30}$/.test(ig)) out.push({ t: "Instagram", url: `https://www.instagram.com/${ig}/`, ic: ICON.instagram });
+    if (urlValida(m.site)) out.push({ t: "Site", url: m.site.trim(), ic: ICON.link });
+    return out;
+  }
+  const botoesContato = (m) => linksContato(m).map((l) => `<a class="btn btn-pequeno" href="${esc(l.url)}" target="_blank" rel="noopener">${l.ic} ${l.t}</a>`).join("");
+
+  async function carregarUgc() {
+    const [m, p] = await Promise.all([api.listar("ugc_marcas", "nome"), api.listar("ugc_propostas", "ordem")]);
+    UGC.marcas = m.rows;
+    UGC.propostas = p.rows;
+    UGC.semTabela = !!(m.semTabela || p.semTabela);
+    UGC.erro = UGC.semTabela ? "" : m.erro || p.erro || "";
+  }
+  const avisoUgc = () => `
+    ${UGC.semTabela ? `<p class="alerta" style="margin:0 0 14px">Pra salvar marcas e propostas, rode o script <b>08_ugc.sql</b> no Supabase (veja o LEIA-ME).</p>` : ""}
+    ${UGC.erro ? `<p class="erro">Não foi possível carregar: ${esc(UGC.erro)}</p>` : ""}`;
+
+  async function telaUgc(sub) {
+    if (!["prospeccao", "marcas"].includes(sub)) sub = "prospeccao";
+    UGC.sub = sub;
+    conteudo().innerHTML = `
+      <div class="cabecalho">
+        <div>
+          <p class="sobretitulo">Trabalho com marcas</p>
+          <h1>UGC</h1>
+          <p class="muted">Prospecção, propostas e tudo de cada marca num lugar só.</p>
+        </div>
+        <button class="btn btn-primario" id="ugc-novo">${ICON.mais} ${sub === "marcas" ? "Nova marca" : "Nova proposta"}</button>
+      </div>
+      <nav class="abas">
+        <a href="#/ugc/prospeccao" class="${sub === "prospeccao" ? "ativo" : ""}">Prospecção</a>
+        <a href="#/ugc/marcas" class="${sub === "marcas" ? "ativo" : ""}">Marcas</a>
+      </nav>
+      <div id="ugc-conteudo"><p class="muted">Carregando...</p></div>`;
+    $("#ugc-novo").addEventListener("click", () => (sub === "marcas" ? abrirMarca(null) : abrirProposta(null, { status: "enviar" })));
+    await carregarUgc();
+    if (!$("#ugc-conteudo") || UGC.sub !== sub) return;
+    if (sub === "marcas") desenharMarcas(); else desenharProspeccao();
+  }
+  async function recarregarUgc() {
+    await carregarUgc();
+    if (!$("#ugc-conteudo")) return;
+    if (UGC.sub === "marcas") desenharMarcasArea(); else { desenharDash(); desenharUgcArea(); }
+  }
+
+  // ---------- Prospecção ----------
+  function desenharProspeccao() {
+    const alvo = $("#ugc-conteudo");
+    alvo.innerHTML = `${avisoUgc()}
+      <div id="ugc-dash"></div>
+      <div class="ferramentas" style="margin-top:22px">
+        <div class="alternar" role="group" aria-label="Ver como">
+          <button type="button" data-vista="quadro" aria-pressed="${UGC.vista === "quadro"}">Quadro</button>
+          <button type="button" data-vista="planilha" aria-pressed="${UGC.vista === "planilha"}">Planilha</button>
+        </div>
+        <input type="search" id="ugc-busca" placeholder="Buscar marca, responsável, anotação" value="${esc(UGC.busca)}" aria-label="Buscar propostas">
+        <select id="ugc-canal" aria-label="Filtrar por canal"><option value="">Todos os canais</option>
+          ${Object.entries(CANAIS_P).map(([v, t]) => `<option value="${v}" ${UGC.canal === v ? "selected" : ""}>${t}</option>`).join("")}</select>
+        <button type="button" class="btn" id="ugc-baixar">${ICON.baixar} Baixar planilha</button>
+      </div>
+      <div id="ugc-area"></div>`;
+    desenharDash();
+    desenharUgcArea();
+
+    // (propriedades em vez de addEventListener: redesenhar não acumula eventos)
+    alvo.oninput = (e) => { if (e.target.id === "ugc-busca") { UGC.busca = e.target.value; desenharUgcArea(); } };
+    alvo.onchange = (e) => { if (e.target.id === "ugc-canal") { UGC.canal = e.target.value; desenharUgcArea(); } };
+    alvo.onclick = (e) => {
+      const b = e.target.closest("[data-vista],#ugc-baixar,[data-mover-p],[data-nova-p],[data-ordem-p],[data-abrir-p],.card-prop");
+      if (!b || e.target.closest("a")) return;
+      if (b.dataset.vista) {
+        UGC.vista = b.dataset.vista;
+        $$("[data-vista]").forEach((x) => x.setAttribute("aria-pressed", String(x.dataset.vista === UGC.vista)));
+        return desenharUgcArea();
+      }
+      if (b.id === "ugc-baixar") return baixarPropostas();
+      if (b.dataset.moverP) return moverProposta(b.closest(".card-prop").dataset.id, b.dataset.moverP);
+      if (b.dataset.novaP) return abrirProposta(null, { status: b.dataset.novaP });
+      if (b.dataset.ordemP) {
+        const k = b.dataset.ordemP;
+        if (UGC.ordem === k) UGC.asc = !UGC.asc; else { UGC.ordem = k; UGC.asc = ["marca", "status", "canal"].includes(k); }
+        return desenharUgcArea();
+      }
+      const id = b.dataset.abrirP || b.dataset.id;
+      const p = UGC.propostas.find((x) => x.id === id);
+      if (p) abrirProposta(p);
+    };
+    alvo.onkeydown = (e) => {
+      const alvoEl = e.target.closest(".card-prop, tr[data-abrir-p]");
+      if (alvoEl && e.target === alvoEl && (e.key === "Enter" || e.key === " ")) {
+        e.preventDefault();
+        const p = UGC.propostas.find((x) => x.id === (alvoEl.dataset.id || alvoEl.dataset.abrirP));
+        if (p) abrirProposta(p);
+      }
+    };
+
+    // Arrastar e soltar entre colunas (no celular, use as setinhas do card)
+    const cardArrastado = () => UGC.arrastando && alvo.querySelector(`.card-prop[data-id="${CSS.escape(UGC.arrastando)}"]`);
+    alvo.ondragstart = (e) => {
+      const card = e.target.closest(".card-prop");
+      if (!card) return;
+      UGC.soltou = false; UGC.arrastando = card.dataset.id;
+      e.dataTransfer.effectAllowed = "move";
+      e.dataTransfer.setData("text/plain", card.dataset.id);
+      setTimeout(() => card.classList.add("arrastando"), 0);
+    };
+    alvo.ondragover = (e) => {
+      const col = e.target.closest(".coluna");
+      const lista = col && col.querySelector(".coluna-lista");
+      const card = cardArrastado();
+      if (!lista || !card) return;
+      e.preventDefault();
+      $$(".coluna-lista.alvo").forEach((l) => l !== lista && l.classList.remove("alvo"));
+      lista.classList.add("alvo");
+      const depois = [...lista.querySelectorAll(".card-prop")].filter((c) => c !== card)
+        .find((c) => { const r = c.getBoundingClientRect(); return e.clientY < r.top + r.height / 2; });
+      if (depois) lista.insertBefore(card, depois); else lista.appendChild(card);
+    };
+    alvo.ondrop = (e) => {
+      const card = cardArrastado();
+      const lista = card && card.closest(".coluna-lista");
+      if (!lista) return;
+      e.preventDefault();
+      UGC.soltou = true;
+      const ids = [...lista.querySelectorAll(".card-prop")].map((x) => x.dataset.id);
+      const i = ids.indexOf(card.dataset.id);
+      const ord = (id) => (UGC.propostas.find((x) => x.id === id) || {}).ordem || 0;
+      const ant = ids[i - 1], prox = ids[i + 1];
+      moverProposta(card.dataset.id, lista.dataset.status, ant && prox ? (ord(ant) + ord(prox)) / 2 : ant ? ord(ant) + 1 : prox ? ord(prox) - 1 : 0);
+    };
+    alvo.ondragend = () => {
+      $$(".coluna-lista.alvo").forEach((l) => l.classList.remove("alvo"));
+      const c = cardArrastado();
+      if (c) c.classList.remove("arrastando");
+      UGC.arrastando = null;
+      if (!UGC.soltou) desenharUgcArea();
+    };
+  }
+
+  // Números do topo e gráficos (sempre de TODAS as propostas, sem filtro)
+  function desenharDash() {
+    const el = $("#ugc-dash");
+    if (!el) return;
+    const ps = UGC.propostas, h = hoje(), d = new Date();
+    const seg = dataISO(new Date(d.getFullYear(), d.getMonth(), d.getDate() - ((d.getDay() + 6) % 7)));
+    const enviadas = ps.filter((p) => p.status !== "enviar" && p.data_envio);
+    const responderam = enviadas.filter((p) => p.respondeu_em || RESPONDEU.includes(p.status)).length;
+    const aprovadas = ps.filter((p) => p.status === "aprovado");
+    const pct = (n) => (enviadas.length ? Math.round((n / enviadas.length) * 100) : 0);
+    const valor = aprovadas.reduce((s, p) => s + (Number(p.valor) || 0), 0);
+    const follow = ps.filter((p) => ABERTAS.includes(p.status) && p.proximo_followup && p.proximo_followup <= h).length;
+    const cartao = (v, t, sub, cls = "") => `<div class="cartao kpi ${cls}"><span class="rotulo">${t}</span><div class="valor">${v}</div><div class="sub">${sub}</div></div>`;
+
+    const porDia = [];
+    for (let i = 13; i >= 0; i--) {
+      const dia = dataISO(new Date(d.getFullYear(), d.getMonth(), d.getDate() - i));
+      porDia.push({ date: dia, value: enviadas.filter((p) => p.data_envio === dia).length });
+    }
+    const porSemana = [];
+    for (let i = 7; i >= 0; i--) {
+      const ini = new Date(seg + "T12:00:00"); ini.setDate(ini.getDate() - 7 * i);
+      const fim = new Date(ini); fim.setDate(fim.getDate() + 6);
+      const a = dataISO(ini), b = dataISO(fim);
+      porSemana.push({ date: a, value: enviadas.filter((p) => p.data_envio >= a && p.data_envio <= b).length });
+    }
+
+    el.innerHTML = `
+      <div class="grade grade-4">
+        ${cartao(fmtNum(enviadas.length), "Propostas enviadas", "no total")}
+        ${cartao(fmtNum(enviadas.filter((p) => p.data_envio === h).length), "Enviadas hoje", esc(fmtDataCurta(h)))}
+        ${cartao(fmtNum(enviadas.filter((p) => p.data_envio >= seg && p.data_envio <= h).length), "Nesta semana", "de segunda até hoje")}
+        ${cartao(fmtNum(ps.filter((p) => p.status === "enviada").length), "Aguardando resposta", "ainda sem retorno")}
+        ${cartao(pct(responderam) + "%", "Já responderam", `${fmtNum(responderam)} de ${fmtNum(enviadas.length)} enviadas`)}
+        ${cartao(fmtNum(ps.filter((p) => p.status === "negociacao").length), "Em negociação", "conversando sobre valores")}
+        ${cartao(fmtNum(aprovadas.length), "Aprovadas", `${pct(aprovadas.length)}% das enviadas${valor ? " · " + esc(fmtReal(valor)) : ""}`)}
+        ${cartao(fmtNum(follow), "Follow-ups pra hoje", follow ? "inclui os atrasados" : "tudo em dia", follow ? "kpi-alerta" : "")}
+      </div>
+      <div class="grade grade-2" style="margin-top:16px">
+        <div class="cartao"><h3>Envios por dia</h3><p class="muted" style="font-size:13px">últimos 14 dias</p>${barras(porDia, "propostas")}</div>
+        <div class="cartao"><h3>Envios por semana</h3><p class="muted" style="font-size:13px">últimas 8 semanas (cada barra começa na segunda)</p>${barras(porSemana, "propostas")}</div>
+      </div>`;
+  }
+
+  function filtradasP() {
+    const b = normal(UGC.busca).trim();
+    return UGC.propostas.filter((p) => {
+      const m = marcaDe(p) || {};
+      return (!UGC.canal || p.canal === UGC.canal) &&
+        (!b || [nomeMarca(p), m.responsavel, m.email, m.telefone, m.instagram, p.proposta, p.notas].some((v) => normal(v).includes(b)));
+    });
+  }
+
+  function desenharUgcArea() {
+    const area = $("#ugc-area");
+    if (!area) return;
+    area.innerHTML = UGC.vista === "planilha" ? htmlPlanilhaP() : htmlQuadroP();
+  }
+
+  function htmlQuadroP() {
+    const lista = filtradasP();
+    return `<div class="quadro quadro-p">${ETAPAS_P.map((e, i) => {
+      const cards = lista.filter((p) => p.status === e.s).sort((a, b) => (a.ordem || 0) - (b.ordem || 0));
+      return `<section class="coluna" aria-label="${e.t}">
+        <header class="coluna-cab"><h3><i class="ponto etapa-${e.s}"></i>${e.t}</h3><span class="contagem">${cards.length}</span></header>
+        <div class="coluna-lista" data-status="${e.s}">
+          ${cards.map((p) => htmlCardP(p, i)).join("") || `<p class="coluna-vazia">${i === 0 ? "Marcas que você quer abordar" : "Arraste uma proposta pra cá"}</p>`}
+        </div>
+        ${i === 0 ? `<button type="button" class="btn btn-fantasma btn-pequeno coluna-add" data-nova-p="enviar">${ICON.mais} Adicionar</button>` : ""}
+      </section>`;
+    }).join("")}</div>`;
+  }
+
+  function htmlCardP(p, i) {
+    const m = marcaDe(p);
+    const ant = ETAPAS_P[i - 1], prox = ETAPAS_P[i + 1];
+    const fu = p.proximo_followup && ABERTAS.includes(p.status) ? corPrazo(p.proximo_followup, false) : "";
+    return `<article class="card-conteudo card-prop etapa-${esc(p.status)}" draggable="true" data-id="${esc(p.id)}" tabindex="0" aria-label="${esc(nomeMarca(p))}, abrir">
+      <div class="card-corpo">
+        <h4>${esc(nomeMarca(p))}</h4>
+        <div class="prop-linha">${ICON[p.canal] || ICON.outro}<span>${esc(CANAIS_P[p.canal] || p.canal)}</span></div>
+        ${m && m.responsavel ? `<div class="prop-linha muted">${esc(m.responsavel)}</div>` : ""}
+        <div class="prop-linha muted">${p.data_envio && p.status !== "enviar" ? `Enviada em ${esc(fmtDataCurta(p.data_envio))}` : "Ainda não enviada"}</div>
+        ${fu ? `<span class="prazo cor-${fu}"><i></i>Follow-up ${p.proximo_followup === hoje() ? "hoje" : diaMes(p.proximo_followup)}${fu === "vermelho" ? " (atrasado)" : ""}</span>` : ""}
+        ${p.valor ? `<div class="prop-valor">${esc(fmtReal(p.valor))}</div>` : ""}
+        <div class="card-mover">
+          ${ant ? `<button type="button" class="btn-icone" data-mover-p="${ant.s}" aria-label="Mover para ${ant.t}" title="Mover para ${ant.t}">${ICON.voltar}</button>` : ""}
+          ${prox ? `<button type="button" class="btn-icone" data-mover-p="${prox.s}" aria-label="Mover para ${prox.t}" title="Mover para ${prox.t}">${ICON.avancar}</button>` : ""}
+        </div>
+      </div>
+    </article>`;
+  }
+
+  // O que muda sozinho quando a proposta troca de etapa
+  function efeitosStatus(p, status) {
+    const c = {};
+    const agora = new Date().toISOString();
+    if (status !== "enviar" && !p.data_envio) c.data_envio = hoje();
+    if (RESPONDEU.includes(status) && !p.respondeu_em) c.respondeu_em = agora;
+    if (["aprovado", "nao_deu"].includes(status)) { if (p.status !== status || !p.fechado_em) c.fechado_em = agora; }
+    else if (p.fechado_em) c.fechado_em = null;
+    return c;
+  }
+
+  async function moverProposta(id, status, ordem) {
+    const p = UGC.propostas.find((x) => x.id === id);
+    if (!p) return;
+    if (ordem === undefined) {
+      const na = UGC.propostas.filter((x) => x.status === status && x.id !== id);
+      ordem = na.length ? Math.max(...na.map((x) => x.ordem || 0)) + 1 : 0;
+    }
+    const campos = { id, status, ordem, ...efeitosStatus(p, status) };
+    const antes = { ...p };
+    Object.assign(p, campos);
+    desenharDash(); desenharUgcArea();
+    const r = await api.salvar("ugc_propostas", campos);
+    if (!r.ok) {
+      Object.assign(p, antes);
+      desenharDash(); desenharUgcArea();
+      return toast("Não foi possível mover: " + (r.erro || ""), "erro", 5000);
+    }
+    if (status === "aprovado" && antes.status !== "aprovado") toast(`${nomeMarca(p)} aprovou! 🎉`, "ok", 4500);
+  }
+
+  // ---------- Planilha ----------
+  const COLS_P = [
+    { k: "marca", t: "Marca" }, { k: "status", t: "Status" }, { k: "canal", t: "Por onde" }, { k: null, t: "Contato" },
+    { k: "data_envio", t: "Envio" }, { k: "proximo_followup", t: "Follow-up" }, { k: "valor", t: "Valor" }, { k: "updated_at", t: "Atualizada" },
+  ];
+  function ordenadasP() {
+    const val = (p) => UGC.ordem === "marca" ? normal(nomeMarca(p)) : UGC.ordem === "status" ? ETAPA_P[p.status].i
+      : UGC.ordem === "valor" ? (p.valor == null ? null : Number(p.valor)) : p[UGC.ordem];
+    return filtradasP().sort((x, y) => {
+      const a = val(x), b = val(y);
+      if (a == null && b == null) return 0;
+      if (a == null || a === "") return 1;
+      if (b == null || b === "") return -1;
+      const r = a < b ? -1 : a > b ? 1 : 0;
+      return UGC.asc ? r : -r;
+    });
+  }
+  function htmlPlanilhaP() {
+    const lista = ordenadasP();
+    if (!lista.length) {
+      return `<div class="cartao vazio" style="padding:36px 12px"><div class="icone-grande">${ICON.ugc}</div>
+        <h2>${UGC.busca || UGC.canal ? "Nada encontrado" : "Nenhuma proposta ainda"}</h2>
+        <p>${UGC.busca || UGC.canal ? "Tente outra busca ou limpe o filtro." : "Clique em \"Nova proposta\" pra começar."}</p></div>`;
+    }
+    const cab = COLS_P.map((c) => {
+      if (!c.k) return `<th scope="col">${c.t}</th>`;
+      const ativo = UGC.ordem === c.k;
+      return `<th scope="col" ${ativo ? `aria-sort="${UGC.asc ? "ascending" : "descending"}"` : ""}><button type="button" class="th-ordem" data-ordem-p="${c.k}">${c.t}${ativo ? (UGC.asc ? " ▲" : " ▼") : ""}</button></th>`;
+    }).join("");
+    const linhas = lista.map((p) => {
+      const m = marcaDe(p) || {};
+      const fu = p.proximo_followup && ABERTAS.includes(p.status) ? corPrazo(p.proximo_followup, false) : "neutro";
+      return `<tr data-abrir-p="${esc(p.id)}" tabindex="0" aria-label="Abrir proposta de ${esc(nomeMarca(p))}">
+        <td><b>${esc(nomeMarca(p))}</b></td>
+        <td><span class="selo-etapa etapa-${esc(p.status)}">${esc(ETAPA_P[p.status] ? ETAPA_P[p.status].t : p.status)}</span></td>
+        <td>${esc(CANAIS_P[p.canal] || p.canal)}</td>
+        <td>${m.responsavel ? `<div>${esc(m.responsavel)}</div>` : ""}${m.email ? `<div class="sub">${esc(m.email)}</div>` : ""}${m.telefone ? `<div class="sub">${esc(fmtTel(m.telefone))}</div>` : ""}${m.instagram ? `<div class="sub">${esc(m.instagram)}</div>` : ""}</td>
+        <td>${esc(p.status !== "enviar" ? fmtDataCurta(p.data_envio) : "")}</td>
+        <td>${p.proximo_followup ? `<span class="prazo cor-${fu}"><i></i>${esc(fmtDataCurta(p.proximo_followup))}</span>` : ""}</td>
+        <td class="num">${esc(fmtReal(p.valor))}</td>
+        <td>${esc(fmtData(p.updated_at))}</td>
+      </tr>`;
+    }).join("");
+    return `<div class="tabela-rolagem"><table class="tabela tabela-leads tabela-prop"><thead><tr>${cab}</tr></thead><tbody>${linhas}</tbody></table></div>
+      <p class="muted" style="font-size:13px;margin-top:10px">${fmtNum(lista.length)} proposta(s). Clique numa linha pra abrir.</p>`;
+  }
+
+  // CSV que abre no Excel e no Google Planilhas (com os filtros atuais)
+  function baixarPropostas() {
+    const lista = ordenadasP();
+    if (!lista.length) return toast("Nenhuma proposta pra baixar com esses filtros.");
+    const cel = (v) => {
+      let s = String(v ?? "");
+      if (/^[=+\-@\t\r]/.test(s)) s = "'" + s; // protege contra fórmulas
+      return /[;"\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+    };
+    const cab = ["Marca", "Status", "Por onde", "Responsável", "E-mail", "Telefone", "Instagram", "Data de envio", "Próximo follow-up", "Valor", "O que foi proposto", "Anotações"];
+    const linhas = lista.map((p) => {
+      const m = marcaDe(p) || {};
+      return [nomeMarca(p), (ETAPA_P[p.status] || {}).t || p.status, CANAIS_P[p.canal] || p.canal, m.responsavel, m.email, fmtTel(m.telefone), m.instagram,
+        p.status !== "enviar" ? fmtDataCurta(p.data_envio) : "", fmtDataCurta(p.proximo_followup),
+        p.valor != null ? String(p.valor).replace(".", ",") : "", p.proposta, p.notas].map(cel).join(";");
+    });
+    const url = URL.createObjectURL(new Blob(["﻿" + [cab.join(";"), ...linhas].join("\r\n")], { type: "text/csv;charset=utf-8" }));
+    const a = document.createElement("a");
+    a.href = url; a.download = `prospeccao-${hoje()}.csv`;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 2000);
+    toast(`Planilha com ${fmtNum(lista.length)} proposta(s) baixada.`, "ok");
+  }
+
+  // ---------- Ficha da proposta ----------
+  function abrirProposta(p, padrao = {}) {
+    const nova = !p;
+    const ed = { status: "enviar", canal: "instagram", ...(p || {}), ...padrao };
+    const m0 = marcaDe(ed);
+    let sujo = false;
+    const opcoes = (mapa, atual) => Object.entries(mapa).map(([v, t]) => `<option value="${v}" ${atual === v ? "selected" : ""}>${t}</option>`).join("");
+
+    abrirModal(`
+      <div class="modal-cab"><h2>${nova ? "Nova proposta" : "Proposta"}</h2><button class="btn-icone" data-fechar aria-label="Fechar">${ICON.x}</button></div>
+      <label class="campo"><span class="rotulo">Marca</span>
+        <input type="text" id="pp-marca" list="pp-marcas" value="${esc((m0 && m0.nome) || ed.marca_nome || "")}" placeholder="Ex: Marca X" maxlength="100">
+        <datalist id="pp-marcas">${UGC.marcas.map((m) => `<option value="${esc(m.nome)}">`).join("")}</datalist></label>
+      <div class="grade grade-2">
+        <label class="campo"><span class="rotulo">Por onde</span><select id="pp-canal">${opcoes(CANAIS_P, ed.canal)}</select></label>
+        <label class="campo"><span class="rotulo">Como está</span><select id="pp-status">${opcoes(Object.fromEntries(ETAPAS_P.map((e) => [e.s, e.t])), ed.status)}</select></label>
+      </div>
+      <div class="grade grade-2">
+        <label class="campo"><span class="rotulo">Data de envio</span><input type="date" id="pp-envio" value="${esc(ed.data_envio || (nova && ed.status !== "enviar" ? hoje() : ""))}"></label>
+        <div class="campo"><label class="rotulo" for="pp-follow">Próximo follow-up</label><input type="date" id="pp-follow" value="${esc(ed.proximo_followup || "")}">
+          <div class="linha-btns" style="margin-top:6px">
+            <button type="button" class="btn btn-fantasma btn-pequeno" data-follow="3">+3 dias</button>
+            <button type="button" class="btn btn-fantasma btn-pequeno" data-follow="7">+7 dias</button>
+            <button type="button" class="btn btn-fantasma btn-pequeno" data-follow="0">Limpar</button>
+          </div></div>
+      </div>
+
+      <h3 class="sub-titulo">Dados da marca</h3>
+      <div class="grade grade-2">
+        <label class="campo"><span class="rotulo">Responsável</span><input type="text" id="pp-responsavel" value="${esc((m0 && m0.responsavel) || "")}" placeholder="Nome de quem cuida"></label>
+        <label class="campo"><span class="rotulo">E-mail</span><input type="email" id="pp-email" value="${esc((m0 && m0.email) || "")}" placeholder="contato@marca.com"></label>
+        <label class="campo"><span class="rotulo">Telefone / WhatsApp</span><input type="text" id="pp-telefone" value="${esc((m0 && m0.telefone) || "")}" placeholder="(47) 99999-0000"></label>
+        <label class="campo"><span class="rotulo">Instagram</span><input type="text" id="pp-instagram" value="${esc((m0 && m0.instagram) || "")}" placeholder="@marca"></label>
+      </div>
+      <div class="contato-rapido" id="pp-contato"></div>
+
+      <label class="campo"><span class="rotulo">Valor proposto ou combinado (opcional)</span>
+        <input type="text" id="pp-valor" inputmode="decimal" value="${ed.valor != null ? esc(String(ed.valor).replace(".", ",")) : ""}" placeholder="Ex: R$ 950"></label>
+      <label class="campo"><span class="rotulo">O que você propôs</span>
+        <textarea id="pp-proposta" rows="3" placeholder="Ex: 3 vídeos UGC + direitos de uso por 3 meses">${esc(ed.proposta || "")}</textarea></label>
+      <label class="campo"><span class="rotulo">Anotações</span>
+        <textarea id="pp-notas" rows="3" placeholder="O que a marca disse, o que falta mandar...">${esc(ed.notas || "")}</textarea></label>
+
+      <div class="modal-rodape" style="justify-content:space-between">
+        ${nova ? "<span></span>" : `<button type="button" class="btn btn-perigo" data-excluir>${ICON.lixo} Excluir</button>`}
+        <span style="display:flex;gap:8px"><button type="button" class="btn" data-fechar>Cancelar</button><button type="button" class="btn btn-primario" data-salvar>Salvar</button></span>
+      </div>`, aoClicar, "largo", () => !sujo || confirm("Você tem alterações não salvas. Fechar mesmo assim?"));
+
+    const v = (id) => $("#" + id).value.trim();
+    const dadosContato = () => ({ responsavel: v("pp-responsavel"), email: v("pp-email"), telefone: v("pp-telefone"), instagram: v("pp-instagram") });
+    const atualizarContato = () => {
+      const html = botoesContato({ ...dadosContato(), site: (m0 && m0.site) || "" });
+      $("#pp-contato").innerHTML = html ? `<span class="rotulo" style="margin:0">Falar com a marca</span>${html}` : "";
+    };
+    atualizarContato();
+    if (nova) setTimeout(() => { const t = $("#pp-marca"); if (t && !t.value) t.focus(); }, 50);
+
+    const m = $("#modal");
+    m.oninput = (e) => {
+      sujo = true;
+      if (e.target.id === "pp-marca") {
+        // escolheu uma marca já cadastrada: completa os dados que estão vazios
+        const achada = acharMarcaPorNome(e.target.value);
+        if (achada) ["responsavel", "email", "telefone", "instagram"].forEach((k) => { const c = $("#pp-" + k); if (!c.value && achada[k]) c.value = achada[k]; });
+      }
+      atualizarContato();
+    };
+    m.onchange = (e) => {
+      sujo = true;
+      if (e.target.id === "pp-status" && e.target.value !== "enviar" && !$("#pp-envio").value) $("#pp-envio").value = hoje();
+    };
+
+    async function aoClicar(e) {
+      const fb = e.target.closest("[data-follow]");
+      if (fb) {
+        const n = Number(fb.dataset.follow);
+        const d = new Date(); d.setDate(d.getDate() + n);
+        $("#pp-follow").value = n ? dataISO(d) : "";
+        sujo = true;
+        return;
+      }
+      if (e.target.closest("[data-excluir]")) {
+        if (!confirm(`Excluir a proposta de ${nomeMarca(ed)}? A marca continua cadastrada.`)) return;
+        if (!(await api.apagar("ugc_propostas", [ed.id]))) return toast("Não foi possível excluir. Tente de novo.", "erro");
+        sujo = false; fecharModal(); toast("Proposta excluída.");
+        return recarregarUgc();
+      }
+      const btn = e.target.closest("[data-salvar]");
+      if (!btn) return;
+      const nome = v("pp-marca");
+      if (!nome) { toast("Escreva o nome da marca.", "erro"); $("#pp-marca").focus(); return; }
+      const contato = dadosContato();
+      if (contato.email && !/^\S+@\S+\.\S+$/.test(contato.email)) { toast("Esse e-mail parece incompleto.", "erro"); $("#pp-email").focus(); return; }
+      const valorTxt = v("pp-valor");
+      const valor = lerValor(valorTxt);
+      if (valorTxt && valor == null) { toast("Não entendi o valor. Use só números, ex: 950 ou 1.200,50", "erro"); return; }
+
+      btn.disabled = true; btn.textContent = "Salvando...";
+      const pronto = () => { btn.disabled = false; btn.textContent = "Salvar"; };
+
+      // 1) a marca: cria se não existe, ou atualiza os dados de contato
+      let marca = acharMarcaPorNome(nome);
+      if (!marca) {
+        const r = await api.salvar("ugc_marcas", { nome, cupons: [], links: [], arquivos: [], parceira: false,
+          ...Object.fromEntries(Object.entries(contato).map(([k, x]) => [k, x || null])) });
+        if (!r.ok) { pronto(); return toast("Não foi possível salvar a marca: " + (r.erro || ""), "erro", 5000); }
+        marca = r.data; UGC.marcas.push(marca);
+      } else {
+        const mudou = Object.fromEntries(Object.entries(contato).filter(([k, x]) => x !== (marca[k] || "")).map(([k, x]) => [k, x || null]));
+        if (Object.keys(mudou).length) {
+          const r = await api.salvar("ugc_marcas", { id: marca.id, ...mudou });
+          if (!r.ok) { pronto(); return toast("Não foi possível atualizar a marca: " + (r.erro || ""), "erro", 5000); }
+        }
+      }
+
+      // 2) a proposta
+      const status = $("#pp-status").value;
+      const base = { ...ed, data_envio: $("#pp-envio").value || null };
+      const campos = {
+        marca_id: marca.id, marca_nome: marca.nome, status, canal: $("#pp-canal").value,
+        data_envio: $("#pp-envio").value || null, proximo_followup: $("#pp-follow").value || null,
+        valor, proposta: $("#pp-proposta").value, notas: $("#pp-notas").value,
+        ...efeitosStatus(base, status),
+      };
+      if (nova || status !== ed.status) {
+        const na = UGC.propostas.filter((x) => x.status === status && x.id !== ed.id);
+        campos.ordem = na.length ? Math.max(...na.map((x) => x.ordem || 0)) + 1 : 0;
+      }
+      if (!nova) campos.id = ed.id;
+      const r = await api.salvar("ugc_propostas", campos);
+      if (!r.ok) { pronto(); return toast("Não foi possível salvar: " + (r.erro || ""), "erro", 5000); }
+      sujo = false;
+      fecharModal();
+      toast(r.local ? "Salvo neste navegador (modo de teste)." : status === "aprovado" && ed.status !== "aprovado" ? `${marca.nome} aprovou! 🎉` : "Proposta salva.", "ok");
+      recarregarUgc();
+    }
+  }
+
+  // ---------- Marcas ----------
+  function desenharMarcas() {
+    const alvo = $("#ugc-conteudo");
+    alvo.innerHTML = `${avisoUgc()}
+      <div class="ferramentas">
+        <input type="search" id="mc-busca" placeholder="Buscar marca, segmento, cupom, responsável" value="${esc(UGC.buscaM)}" aria-label="Buscar marcas">
+        <label class="switch"><input type="checkbox" id="mc-parceiras" ${UGC.soParceiras ? "checked" : ""}><span class="trilho"></span><span>Só parcerias ativas</span></label>
+      </div>
+      <div id="mc-area"></div>`;
+    desenharMarcasArea();
+    alvo.oninput = (e) => { if (e.target.id === "mc-busca") { UGC.buscaM = e.target.value; desenharMarcasArea(); } };
+    alvo.onchange = (e) => { if (e.target.id === "mc-parceiras") { UGC.soParceiras = e.target.checked; desenharMarcasArea(); } };
+    alvo.onclick = (e) => {
+      const b = e.target.closest("[data-abrir-m],[data-copiar-v]");
+      if (!b) return;
+      if (b.dataset.copiarV) return copiarTexto(b.dataset.copiarV, "Copiado.");
+      const m = UGC.marcas.find((x) => x.id === b.dataset.abrirM);
+      if (m) abrirMarca(m);
+    };
+    alvo.onkeydown = null; alvo.ondragstart = null; alvo.ondragover = null; alvo.ondrop = null; alvo.ondragend = null;
+  }
+
+  function desenharMarcasArea() {
+    const area = $("#mc-area");
+    if (!area) return;
+    const b = normal(UGC.buscaM).trim();
+    const lista = UGC.marcas
+      .filter((m) => (!UGC.soParceiras || m.parceira) &&
+        (!b || [m.nome, m.segmento, m.responsavel, m.email, m.instagram, ...(m.cupons || []).map((c) => c.codigo)].some((v) => normal(v).includes(b))))
+      .sort((x, y) => Number(y.parceira) - Number(x.parceira) || x.nome.localeCompare(y.nome, "pt-BR"));
+    if (!lista.length) {
+      area.innerHTML = `<div class="cartao vazio"><div class="icone-grande">${ICON.ugc}</div>
+        <h2>${b || UGC.soParceiras ? "Nenhuma marca encontrada" : "Nenhuma marca ainda"}</h2>
+        <p>${b || UGC.soParceiras ? "Tente outra busca." : "Cadastre uma marca aqui, ou crie uma proposta na Prospecção: a marca é cadastrada sozinha."}</p></div>`;
+      return;
+    }
+    area.innerHTML = `<div class="marcas-grade">${lista.map((m) => {
+      const ps = UGC.propostas.filter((p) => p.marca_id === m.id).sort((x, y) => (x.updated_at < y.updated_at ? 1 : -1));
+      const ult = ps[0];
+      const cupons = m.cupons || [], links = m.links || [], arqs = m.arquivos || [];
+      return `<article class="marca-card">
+        <button type="button" class="marca-card-topo" data-abrir-m="${esc(m.id)}" aria-label="Abrir ${esc(m.nome)}">
+          <span class="marca-inicial">${esc((m.nome || "?").trim().charAt(0).toUpperCase())}</span>
+          <span class="marca-card-txt"><b>${esc(m.nome)}</b><span class="sub">${esc(m.segmento || m.responsavel || m.instagram || "")}</span></span>
+          ${m.parceira ? `<span class="selo ok">Parceria ativa</span>` : ""}
+        </button>
+        ${cupons.length ? `<div class="marca-cupons">${cupons.slice(0, 3).map((c) => `<button type="button" class="cupom" data-copiar-v="${esc(c.codigo)}" title="Copiar cupom ${esc(c.codigo)}">${ICON.copiar}<span>${esc(c.codigo)}</span></button>`).join("")}</div>` : ""}
+        ${links.length ? `<div class="marca-links">${links.slice(0, 2).map((l) => `<button type="button" class="link-copiar" data-copiar-v="${esc(l.url)}" title="Copiar ${esc(l.rotulo || "link")}">${ICON.link}<span>${esc(l.rotulo || dominio(l.url))}</span></button>`).join("")}</div>` : ""}
+        <div class="marca-rodape">
+          <span>${arqs.length ? `${ICON.arquivo} ${arqs.length} ${arqs.length === 1 ? "arquivo" : "arquivos"}` : ""}</span>
+          ${ult ? `<span class="selo-etapa etapa-${esc(ult.status)}">${esc(ETAPA_P[ult.status] ? ETAPA_P[ult.status].t : ult.status)}</span>` : ""}
+        </div>
+      </article>`;
+    }).join("")}</div>`;
+  }
+
+  // Ficha da marca: contato, cupons, links, contratos/arquivos, propostas
+  function abrirMarca(m) {
+    const nova = !m;
+    const ed = { nome: "", parceira: false, ...(m || {}) };
+    ed.cupons = (ed.cupons || []).map((c) => ({ codigo: c.codigo || "", descricao: c.descricao || "" }));
+    ed.links = (ed.links || []).map((l) => ({ rotulo: l.rotulo || "", url: l.url || "" }));
+    let arquivos = (ed.arquivos || []).slice();
+    const pendentes = [];   // arquivos escolhidos, enviados só ao salvar
+    const removidos = [];   // caminhos pra apagar do Storage ao salvar
+    let sujo = false;
+    const propostas = nova ? [] : UGC.propostas.filter((p) => p.marca_id === ed.id).sort((x, y) => (x.updated_at < y.updated_at ? 1 : -1));
+
+    const cuponsHtml = () => ed.cupons.length ? ed.cupons.map((c, i) => `<div class="linha-edit">
+        <input type="text" data-cupom="${i}" data-c="codigo" value="${esc(c.codigo)}" placeholder="CUPOM10" aria-label="Código do cupom ${i + 1}">
+        <input type="text" data-cupom="${i}" data-c="descricao" value="${esc(c.descricao)}" placeholder="Ex: 10% off no site" aria-label="Descrição do cupom ${i + 1}">
+        <button type="button" class="btn-icone" data-copiar-cupom="${i}" aria-label="Copiar cupom" title="Copiar">${ICON.copiar}</button>
+        <button type="button" class="btn-icone" data-del-cupom="${i}" aria-label="Remover cupom" title="Remover">${ICON.x}</button>
+      </div>`).join("") : `<p class="muted" style="font-size:13px;margin:0 0 6px">Nenhum cupom.</p>`;
+    const linksHtml = () => ed.links.length ? ed.links.map((l, i) => `<div class="linha-edit linha-edit-5">
+        <input type="text" data-lnk="${i}" data-c="rotulo" value="${esc(l.rotulo)}" placeholder="Ex: Link de indicação" aria-label="Nome do link ${i + 1}">
+        <input type="url" data-lnk="${i}" data-c="url" value="${esc(l.url)}" placeholder="https://..." aria-label="Endereço do link ${i + 1}">
+        <button type="button" class="btn-icone" data-copiar-lnk="${i}" aria-label="Copiar link" title="Copiar">${ICON.copiar}</button>
+        <button type="button" class="btn-icone" data-abrir-lnk="${i}" aria-label="Abrir link" title="Abrir">${ICON.link}</button>
+        <button type="button" class="btn-icone" data-del-lnk="${i}" aria-label="Remover link" title="Remover">${ICON.x}</button>
+      </div>`).join("") : `<p class="muted" style="font-size:13px;margin:0 0 6px">Nenhum link.</p>`;
+    const arquivosHtml = () => (arquivos.length || pendentes.length) ? `<ul class="arq-lista">
+        ${arquivos.map((a, i) => `<li>${ICON.arquivo}<span class="arq-nome">${esc(a.nome)}</span><span class="muted">${esc(fmtTam(a.tamanho))}</span>
+          <button type="button" class="btn btn-pequeno" data-abrir-arq="${i}">Abrir</button>
+          <button type="button" class="btn-icone" data-del-arq="${i}" aria-label="Remover ${esc(a.nome)}">${ICON.x}</button></li>`).join("")}
+        ${pendentes.map((f, i) => `<li class="pendente">${ICON.enviarArq}<span class="arq-nome">${esc(f.name)}</span><span class="muted">${esc(fmtTam(f.size))} · enviado ao salvar</span>
+          <button type="button" class="btn-icone" data-del-pend="${i}" aria-label="Remover ${esc(f.name)}">${ICON.x}</button></li>`).join("")}
+      </ul>` : `<p class="muted" style="font-size:13px;margin:0 0 6px">Nenhum contrato ou arquivo.</p>`;
+
+    abrirModal(`
+      <div class="modal-cab"><h2>${nova ? "Nova marca" : esc(ed.nome)}</h2><button class="btn-icone" data-fechar aria-label="Fechar">${ICON.x}</button></div>
+      <div class="grade grade-2">
+        <label class="campo"><span class="rotulo">Nome da marca</span><input type="text" id="mm-nome" value="${esc(ed.nome)}" placeholder="Ex: Marca X" maxlength="100"></label>
+        <label class="campo"><span class="rotulo">Segmento</span><input type="text" id="mm-segmento" value="${esc(ed.segmento || "")}" placeholder="Ex: skincare, moda infantil"></label>
+      </div>
+      <label class="switch" style="margin-bottom:16px"><input type="checkbox" id="mm-parceira" ${ed.parceira ? "checked" : ""}><span class="trilho"></span><span>Parceria ativa</span></label>
+
+      <h3 class="sub-titulo">Contato</h3>
+      <div class="grade grade-2">
+        <label class="campo"><span class="rotulo">Responsável</span><input type="text" id="mm-responsavel" value="${esc(ed.responsavel || "")}"></label>
+        <label class="campo"><span class="rotulo">E-mail</span><input type="email" id="mm-email" value="${esc(ed.email || "")}"></label>
+        <label class="campo"><span class="rotulo">Telefone / WhatsApp</span><input type="text" id="mm-telefone" value="${esc(ed.telefone || "")}"></label>
+        <label class="campo"><span class="rotulo">Instagram</span><input type="text" id="mm-instagram" value="${esc(ed.instagram || "")}" placeholder="@marca"></label>
+      </div>
+      <label class="campo"><span class="rotulo">Site</span><input type="url" id="mm-site" value="${esc(ed.site || "")}" placeholder="https://..."></label>
+      <div class="contato-rapido" id="mm-contato"></div>
+
+      <h3 class="sub-titulo">Cupons</h3>
+      <div id="mm-cupons">${cuponsHtml()}</div>
+      <button type="button" class="btn btn-fantasma btn-pequeno" data-add-cupom>${ICON.mais} Adicionar cupom</button>
+
+      <h3 class="sub-titulo">Links (indicação, briefing, mídia kit...)</h3>
+      <div id="mm-links">${linksHtml()}</div>
+      <button type="button" class="btn btn-fantasma btn-pequeno" data-add-lnk>${ICON.mais} Adicionar link</button>
+
+      <h3 class="sub-titulo">Contratos e arquivos</h3>
+      <div id="mm-arquivos">${arquivosHtml()}</div>
+      <input type="file" id="mm-arquivo" multiple hidden>
+      <button type="button" class="btn btn-fantasma btn-pequeno" data-add-arq>${ICON.enviarArq} Anexar arquivo</button>
+      <p class="ajuda">PDF de contrato, briefing, nota fiscal... até 20 MB cada, numa pasta privada.</p>
+
+      <label class="campo" style="margin-top:14px"><span class="rotulo">Anotações</span>
+        <textarea id="mm-notas" rows="3" placeholder="Prazos de pagamento, regras de uso de imagem, preferências da marca...">${esc(ed.notas || "")}</textarea></label>
+
+      ${nova ? "" : `<h3 class="sub-titulo">Propostas</h3>
+        ${propostas.length ? `<ul class="historico">${propostas.map((p) => `<li>
+          <span class="quando">${esc(p.data_envio && p.status !== "enviar" ? fmtDataCurta(p.data_envio) : "não enviada")}</span>
+          <span class="oque">${esc(CANAIS_P[p.canal] || p.canal)}${p.valor ? ` · ${esc(fmtReal(p.valor))}` : ""}${p.proposta ? `<span class="sub">${esc(p.proposta)}</span>` : ""}</span>
+          <span class="selo-etapa etapa-${esc(p.status)}">${esc(ETAPA_P[p.status] ? ETAPA_P[p.status].t : p.status)}</span></li>`).join("")}</ul>` : `<p class="muted" style="font-size:13px">Nenhuma proposta ainda.</p>`}
+        <button type="button" class="btn btn-pequeno" style="margin-top:8px" data-nova-prop>${ICON.mais} Nova proposta pra esta marca</button>`}
+
+      <div class="modal-rodape" style="justify-content:space-between">
+        ${nova ? "<span></span>" : `<button type="button" class="btn btn-perigo" data-excluir>${ICON.lixo} Excluir</button>`}
+        <span style="display:flex;gap:8px"><button type="button" class="btn" data-fechar>Cancelar</button><button type="button" class="btn btn-primario" data-salvar>Salvar</button></span>
+      </div>`, aoClicar, "largo", () => !sujo || confirm("Você tem alterações não salvas. Fechar mesmo assim?"));
+
+    const v = (id) => $("#" + id).value.trim();
+    const atualizarContato = () => {
+      const html = botoesContato({ email: v("mm-email"), telefone: v("mm-telefone"), instagram: v("mm-instagram"), site: v("mm-site") });
+      $("#mm-contato").innerHTML = html ? `<span class="rotulo" style="margin:0">Falar com a marca</span>${html}` : "";
+    };
+    atualizarContato();
+    if (nova) setTimeout(() => { const t = $("#mm-nome"); if (t) t.focus(); }, 50);
+
+    const md = $("#modal");
+    md.oninput = (e) => {
+      sujo = true;
+      const t = e.target;
+      if (t.dataset.cupom !== undefined) ed.cupons[+t.dataset.cupom][t.dataset.c] = t.value;
+      if (t.dataset.lnk !== undefined) ed.links[+t.dataset.lnk][t.dataset.c] = t.value;
+      if (/^mm-(email|telefone|instagram|site)$/.test(t.id)) atualizarContato();
+    };
+    md.onchange = (e) => {
+      sujo = true;
+      if (e.target.id === "mm-arquivo" && e.target.files.length) {
+        const limite = USA_BANCO ? LIMITE_ARQUIVO : LIMITE_LOCAL;
+        [...e.target.files].forEach((f) => {
+          if (f.size > limite) toast(`${f.name} passa de ${fmtTam(limite)}. Use um link do Google Drive pra esse.`, "erro", 6000);
+          else pendentes.push(f);
+        });
+        e.target.value = "";
+        $("#mm-arquivos").innerHTML = arquivosHtml();
+      }
+    };
+
+    async function aoClicar(e) {
+      const b = e.target.closest("button");
+      if (!b) return;
+      const d = b.dataset;
+      if (d.addCupom !== undefined) { ed.cupons.push({ codigo: "", descricao: "" }); sujo = true; $("#mm-cupons").innerHTML = cuponsHtml(); const x = $(`[data-cupom="${ed.cupons.length - 1}"]`); if (x) x.focus(); return; }
+      if (d.delCupom !== undefined) { ed.cupons.splice(+d.delCupom, 1); sujo = true; $("#mm-cupons").innerHTML = cuponsHtml(); return; }
+      if (d.copiarCupom !== undefined) { const c = ed.cupons[+d.copiarCupom].codigo.trim(); if (c) copiarTexto(c, "Cupom copiado."); return; }
+      if (d.addLnk !== undefined) { ed.links.push({ rotulo: "", url: "" }); sujo = true; $("#mm-links").innerHTML = linksHtml(); const x = $(`[data-lnk="${ed.links.length - 1}"]`); if (x) x.focus(); return; }
+      if (d.delLnk !== undefined) { ed.links.splice(+d.delLnk, 1); sujo = true; $("#mm-links").innerHTML = linksHtml(); return; }
+      if (d.copiarLnk !== undefined) { const u = ed.links[+d.copiarLnk].url.trim(); if (u) copiarTexto(u, "Link copiado."); return; }
+      if (d.abrirLnk !== undefined) { const u = ed.links[+d.abrirLnk].url; if (urlValida(u)) window.open(u.trim(), "_blank", "noopener"); else toast("Cole o link completo (começando com https://).", "erro"); return; }
+      if (d.addArq !== undefined) return $("#mm-arquivo").click();
+      if (d.delPend !== undefined) { pendentes.splice(+d.delPend, 1); $("#mm-arquivos").innerHTML = arquivosHtml(); return; }
+      if (d.delArq !== undefined) {
+        const a = arquivos[+d.delArq];
+        if (!confirm(`Remover "${a.nome}"? Ele é apagado quando você salvar.`)) return;
+        removidos.push(a.path); arquivos.splice(+d.delArq, 1); sujo = true;
+        $("#mm-arquivos").innerHTML = arquivosHtml();
+        return;
+      }
+      if (d.abrirArq !== undefined) {
+        const a = arquivos[+d.abrirArq];
+        const janela = window.open("about:blank", "_blank");
+        try {
+          const url = await api.urlArquivo("ugc", a.path);
+          if (!url) throw new Error("indisponível no modo de teste");
+          if (janela) { janela.opener = null; janela.location.href = url; } else location.href = url;
+        } catch (err) { if (janela) janela.close(); toast("Não foi possível abrir: " + err.message, "erro", 5000); }
+        return;
+      }
+      if (d.novaProp !== undefined) {
+        if (sujo && !confirm("Você tem alterações não salvas nesta marca. Continuar mesmo assim?")) return;
+        return abrirProposta(null, { marca_id: ed.id, marca_nome: ed.nome, status: "enviar" });
+      }
+      if (d.excluir !== undefined) {
+        const n = propostas.length;
+        if (!confirm(`Excluir a marca ${ed.nome}?${n ? ` As ${n} proposta(s) dela continuam na Prospecção, só sem o cadastro da marca.` : ""} Os arquivos anexados são apagados. Não dá pra desfazer.`)) return;
+        await api.apagarArquivos("ugc", arquivos.map((a) => a.path).concat(removidos));
+        if (!(await api.apagar("ugc_marcas", [ed.id]))) return toast("Não foi possível excluir. Tente de novo.", "erro");
+        sujo = false; fecharModal(); toast("Marca excluída.");
+        return recarregarUgc();
+      }
+      if (d.salvar === undefined) return;
+
+      const nome = v("mm-nome");
+      if (!nome) { toast("Escreva o nome da marca.", "erro"); $("#mm-nome").focus(); return; }
+      const outra = acharMarcaPorNome(nome);
+      if (outra && outra.id !== ed.id) { toast(`Já existe uma marca chamada ${outra.nome}.`, "erro", 5000); return; }
+      const email = v("mm-email");
+      if (email && !/^\S+@\S+\.\S+$/.test(email)) { toast("Esse e-mail parece incompleto.", "erro"); $("#mm-email").focus(); return; }
+      const site = v("mm-site");
+      if (site && !urlValida(site)) { toast("O site precisa começar com https://", "erro"); $("#mm-site").focus(); return; }
+      const links = ed.links.map((l) => ({ rotulo: l.rotulo.trim(), url: l.url.trim() })).filter((l) => l.rotulo || l.url);
+      if (links.some((l) => !urlValida(l.url))) { toast("Algum link está incompleto (precisa começar com https://).", "erro", 5000); return; }
+
+      b.disabled = true; b.textContent = "Salvando...";
+      const pronto = () => { b.disabled = false; b.textContent = "Salvar"; };
+      for (const [i, f] of pendentes.entries()) {
+        toast(`Enviando ${i + 1} de ${pendentes.length}: ${f.name}`, "", 60000);
+        const up = await api.enviarArquivo("ugc", f);
+        if (!up.ok) { pronto(); return toast(`Não foi possível enviar ${f.name}: ${up.erro || ""}`, "erro", 6000); }
+        arquivos.push({ nome: f.name, path: up.path, tipo: f.type || "", tamanho: f.size });
+      }
+      pendentes.length = 0;
+      const campos = {
+        nome, segmento: v("mm-segmento") || null, parceira: $("#mm-parceira").checked,
+        responsavel: v("mm-responsavel") || null, email: email || null, telefone: v("mm-telefone") || null,
+        instagram: v("mm-instagram") || null, site: site || null,
+        cupons: ed.cupons.map((c) => ({ codigo: c.codigo.trim(), descricao: c.descricao.trim() })).filter((c) => c.codigo),
+        links, arquivos, notas: $("#mm-notas").value,
+      };
+      if (!nova) campos.id = ed.id;
+      const r = await api.salvar("ugc_marcas", campos);
+      if (!r.ok) { pronto(); return toast("Não foi possível salvar: " + (r.erro || ""), "erro", 5000); }
+      if (removidos.length) api.apagarArquivos("ugc", removidos);
+      // mantém o nome nas propostas em dia (aparece na planilha mesmo se a marca for apagada depois)
+      if (!nova && nome !== ed.nome) {
+        for (const p of propostas) await api.salvar("ugc_propostas", { id: p.id, marca_nome: nome });
+      }
+      sujo = false;
+      fecharModal();
+      toast(r.local ? "Salvo neste navegador (modo de teste)." : "Marca salva.", "ok");
+      recarregarUgc();
+    }
   }
 
   // ---------- Instagram ----------
